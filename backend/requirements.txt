@@ -1,0 +1,55 @@
+# Core Framework
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+pydantic==2.5.3
+pydantic-settings==2.1.0
+
+# Async Task Queue
+celery==5.3.6
+redis==5.0.1
+
+# Database
+psycopg2-binary==2.9.9
+sqlalchemy==2.0.25
+alembic==1.13.1
+
+# Image Processing
+numpy==1.26.3
+Pillow==10.2.0
+opencv-python==4.9.0.80
+scipy==1.12.0
+scikit-image==0.22.0
+
+# Audio Processing
+librosa==0.10.1
+soundfile==0.12.1
+pydub==0.25.1
+
+# Video Processing
+imageio==2.33.1
+imageio-ffmpeg==0.4.9
+
+# Deep Learning (for VideoSeal and GBRAS-Net)
+torch==2.1.2
+torchvision==0.16.2
+
+# Cryptography
+cryptography==42.0.0
+
+# Metrics and Evaluation
+scikit-learn==1.4.0
+pandas==2.2.0
+
+# HTTP Client
+httpx==0.26.0
+aiofiles==23.2.1
+
+# Testing
+pytest==7.4.4
+pytest-asyncio==0.23.3
+pytest-cov==4.1.0
+
+# Development
+black==24.1.1
+flake8==7.0.0
+mypy==1.8.0
