@@ -196,7 +196,7 @@ function ToolPage({ mode }: { mode: Mode }) {
     if (isEncode && resultUrlRef.current) {
       const anchor = document.createElement("a");
       anchor.href = resultUrlRef.current;
-      anchor.download = "harpocrates-stego.png";
+      anchor.download = "stealth-weave.png";
       anchor.click();
       return;
     }

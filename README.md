@@ -15,7 +15,7 @@ Harpocrates/
 ├── backend/              Python stego library (LSB, adaptive, audio, link, steganalysis, metrics) + FastAPI scaffold
 │   └── modules/          the working stego engines (image/audio/link/steganalysis)
 │   └── tests/            pytest suite
-├── frontend/             Replit pnpm workspace (React 19 + Vite + shadcn/ui)
+├── StealthWeave/         Replit pnpm workspace (React 19 + Vite + shadcn/ui)
 │   ├── artifacts/harpocrates/   main client-side app (primary UI)
 │   ├── artifacts/api-server/    Express 5 (currently GET /api/healthz only)
 │   ├── artifacts/mockup-sandbox/ shadcn component sandbox
@@ -26,10 +26,16 @@ Harpocrates/
 └── evaluation/           (empty scaffold: results/ + test_corpus/)
 ```
 
+## Remote
+
+```
+origin  git@github.com:Failing-Comp-Science/StealthWeave.git
+```
+
 ## Development
 
 - **Backend:** `cd backend && python -m pytest` (Python 3.9, deps in `requirements.txt`).
-- **Frontend:** `cd frontend && pnpm install && pnpm dev` (Node 24, pnpm workspace).
+- **Frontend:** `cd StealthWeave && pnpm install && pnpm dev` (Node 24, pnpm workspace).
 
 ## Git hygiene
 
