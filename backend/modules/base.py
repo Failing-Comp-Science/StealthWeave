@@ -23,11 +23,23 @@ from .metrics import MetricsBundle
 # ---------------------------------------------------------------------------
 
 MAGIC = b"HSTG"          # Harpocrates STeGo marker
-HEADER_VERSION = 1
+
+# Container format versions.
+#   v1 = the fixed 14-byte PayloadHeader below (spatial LSB / STFT / link engines).
+#   v2 = the rich multi-modal container in modules/container.py (payload_type,
+#        filename, mime, SHA-256, ECC + preset metadata).
+# Audit §8 rule: any wire-format change bumps HEADER_VERSION here AND in
+# frontend/artifacts/harpocrates/src/lib/stego.ts to keep Python/TS
+# byte-compatible. HEADER_VERSION tracks the *current* container (now v2); the
+# legacy PayloadHeader pins itself to v1 so its bytes never shift.
+HEADER_VERSION_V1 = 1
+HEADER_VERSION_V2 = 2
+HEADER_VERSION = HEADER_VERSION_V2
 
 # Flags bitfield
 FLAG_ENCRYPTED = 0x01
 FLAG_COMPRESSED = 0x02
+FLAG_ECC = 0x04          # payload carries a Reed-Solomon/BCH ECC layer (v2 container)
 
 
 @dataclass
@@ -45,7 +57,7 @@ class PayloadHeader:
     """
     length: int
     flags: int = 0
-    version: int = HEADER_VERSION
+    version: int = HEADER_VERSION_V1  # legacy header is always v1; do not shift its bytes
     crc32: int = 0
 
     SIZE = 14

@@ -28,6 +28,10 @@ pydub==0.25.1
 # Video Processing
 imageio==2.33.1
 imageio-ffmpeg==0.4.9
+# PyAV: bundles a full ffmpeg (with libx264) for frame-level I-frame detection
+# and CRF re-encoding in modules/video_stego (audit §7.3). Pinned to a release
+# with Python 3.9 wheels; 14.x+ dropped cp39 support.
+av==13.1.0
 
 # Deep Learning (for VideoSeal and GBRAS-Net)
 torch==2.1.2
@@ -36,6 +40,10 @@ torchvision==0.16.2
 # Cryptography
 cryptography==42.0.0
 
+# Error-Correcting Codes (payload ECC layer — Reed-Solomon/BCH)
+# Added per audit §7.2 ("Reed-Solomon / BCH ECC layer — none present. Add reedsolo…").
+reedsolo==1.7.0
+
 # Metrics and Evaluation
 scikit-learn==1.4.0
 pandas==2.2.0
@@ -43,6 +51,9 @@ pandas==2.2.0
 # HTTP Client
 httpx==0.26.0
 aiofiles==23.2.1
+
+# Multipart form parsing (FastAPI file uploads for /api/stego/capacity)
+python-multipart==0.0.9
 
 # Testing
 pytest==7.4.4

@@ -131,6 +131,41 @@ def bpp(payload_bits: int, num_pixels: int) -> float:
     return payload_bits / num_pixels
 
 
+def nc(original: Union[np.ndarray, bytes], recovered: Union[np.ndarray, bytes]) -> float:
+    """
+    Normalized Correlation (NC) between the original and recovered payload.
+
+    Pearson correlation coefficient in [-1, 1] over the flattened byte/bits
+    values; 1.0 means perfectly correlated (identical up to linear scaling).
+    Used to score payload reconstruction quality (target > 0.95 in the video
+    benchmark). When both inputs are empty it returns 1.0; when one is empty
+    and the other is not it returns 0.0.
+    """
+    orig = np.asarray(original)
+    reco = np.asarray(recovered)
+    if orig.dtype.kind in ("O", "U", "S"):
+        orig = np.frombuffer(bytes(orig), dtype=np.uint8)
+    if reco.dtype.kind in ("O", "U", "S"):
+        reco = np.frombuffer(bytes(reco), dtype=np.uint8)
+    orig = orig.astype(np.float64).ravel()
+    reco = reco.astype(np.float64).ravel()
+
+    if orig.size == 0 and reco.size == 0:
+        return 1.0
+    if orig.size == 0 or reco.size == 0:
+        return 0.0
+
+    n = min(orig.size, reco.size)
+    a = orig[:n]
+    b = reco[:n]
+    da = a - a.mean()
+    db = b - b.mean()
+    denom = np.sqrt(np.dot(da, da) * np.dot(db, db))
+    if denom == 0.0:
+        return 0.0
+    return float(np.dot(da, db) / denom)
+
+
 def _to_bit_array(data: Union[np.ndarray, bytes]) -> np.ndarray:
     """Convert bytes or array to a flat uint8 bit array."""
     if isinstance(data, (bytes, bytearray)):
