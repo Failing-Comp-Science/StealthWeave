@@ -1,0 +1,16 @@
+combo,combo_label,cover_type,payload_type,payload_type_id,preset,preset_label,n_samples,chi2_cover,chi2_stego,chi2_delta,rs_cover,rs_stego,rs_delta,detectability_score,detected_rate,verdict
+video::text_message,video x text message,video,text message,text_message,light,Light (CRF 18),2,0.0,0.0,0.0,0.018897209208208397,0.0182325280974767,-0.000664681110731695,0.0,0.0,UNDETECTED
+video::text_message,video x text message,video,text message,text_message,standard,Standard (CRF 23),2,0.0,0.0,0.0,0.019253946572657176,0.017352058256169412,-0.001901888316487764,0.0,0.0,UNDETECTED
+video::text_message,video x text message,video,text message,text_message,heavy,Heavy (CRF 28),2,0.0,0.0,0.0,0.016229751557896594,0.0171333789008461,0.0009036273429495062,0.0004518136714747531,0.0,UNDETECTED
+video::text_file,video x text file,video,text file,text_file,light,Light (CRF 18),2,0.0,0.0,0.0,0.018897209208208397,0.017904532951397836,-0.0009926762568105603,0.0,0.0,UNDETECTED
+video::text_file,video x text file,video,text file,text_file,standard,Standard (CRF 23),2,0.0,0.0,0.0,0.019253946572657176,0.01787417013643318,-0.0013797764362239971,0.0,0.0,UNDETECTED
+video::text_file,video x text file,video,text file,text_file,heavy,Heavy (CRF 28),2,0.0,0.0,0.0,0.016229751557896594,0.01779532968195843,0.0015655781240618352,0.0007827890620309176,0.0,UNDETECTED
+video::image,video x image,video,image,image,light,Light (CRF 18),2,0.0,0.0,0.0,0.018897209208208397,0.017804866397719495,-0.0010923428104889013,0.0,0.0,UNDETECTED
+video::image,video x image,video,image,image,standard,Standard (CRF 23),2,0.0,0.0,0.0,0.019253946572657176,0.018034213335137893,-0.0012197332375192826,0.0,0.0,UNDETECTED
+video::image,video x image,video,image,image,heavy,Heavy (CRF 28),2,0.0,0.0,0.0,0.016229751557896594,0.01759586943776779,0.0013661178798711968,0.0006830589399355984,0.0,UNDETECTED
+image::text_message,image x text message,image,text message,text_message,light,Light,6,0.0,0.0,0.0,0.0005346292741089664,0.0015879618242386668,0.0010533325501297004,0.0005346298302152108,0.0,UNDETECTED
+image::text_message,image x text message,image,text message,text_message,standard,Standard,4,0.0,0.0,0.0,0.0006474295164810573,0.00041807717852557214,-0.00022935233795548515,0.0,0.0,UNDETECTED
+image::text_message,image x text message,image,text message,text_message,heavy,Heavy,2,0.0,0.0,0.0,0.0018993045593684865,0.0006359559747301513,-0.0012633485846383352,0.0,0.0,UNDETECTED
+image::text_file,image x text file,image,text file,text_file,light,Light,6,0.0,0.0,0.0,0.0005346292741089664,0.0009480670108303427,0.00041343773672137635,0.00028342413626129825,0.0,UNDETECTED
+image::text_file,image x text file,image,text file,text_file,standard,Standard,4,0.0,0.0,0.0,0.0006474295164810573,0.0002949760924961242,-0.00035245342398493307,0.0,0.0,UNDETECTED
+image::text_file,image x text file,image,text file,text_file,heavy,Heavy,2,0.0,0.0,0.0,0.0018993045593684865,0.0009535856188383485,-0.000945718940530138,0.0,0.0,UNDETECTED

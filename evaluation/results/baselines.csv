@@ -1,0 +1,4 @@
+baseline,payload_rate,psnr,robustness,steganalysis,source
+"JSteg (JPEG, sequential DCT-LSB)",~0.05-0.2 bit / non-zero AC coeff,high for small payloads (~40-50 dB),not robust; re-compression destroys payload,chi-square detects ~100% (sequential embedding),Westfeld & Pflitzmann 1999; McCabe 2004
+"F5 (JPEG, matrix embedding)",~0.5-1.5 bit / non-zero AC coeff,comparable to JSteg at equal payload,"quality-oriented, not re-compression-robust",resists chi-square; RS-based F5 attack estimates rate,"Westfeld 2001 (IH); Fridrich, Goljan, Hogea 2002"
+"OutGuess (JPEG, selection channels)",~0.05-0.25 bit / AC coeff,>40 dB typical (histogram-preserving),not robust; harder to detect than JSteg,evades chi-square; broader statistical tests still flag,Provos 2001 (USENIX Security)
