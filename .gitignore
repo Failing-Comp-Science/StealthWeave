@@ -1,4 +1,4 @@
-# ─── Harpocrates / StealthWeave .gitignore ─────────────────────────────────
+# ─── Harpocrates .gitignore ─────────────────────────────────
 # Rules for what is SAFE to push. Anything matching below stays local only.
 
 # ── External reference repos (NOT pushed; licensed separately, credited in README) ──

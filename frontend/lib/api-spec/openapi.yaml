@@ -1,0 +1,381 @@
+openapi: 3.1.0
+info:
+  # Do not change the title, if the title changes, the import paths will be broken
+  title: Api
+  version: 0.1.0
+  description: API specification
+servers:
+  - url: /api
+    description: Base API path
+tags:
+  - name: health
+    description: Health operations
+  - name: stego
+    description: Steganography capacity + container operations
+paths:
+  /healthz:
+    get:
+      operationId: healthCheck
+      tags: [health]
+      summary: Health check
+      description: Returns server health status
+      responses:
+        "200":
+          description: Healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+  /stego/capacity:
+    post:
+      operationId: stegoCapacity
+      tags: [stego]
+      summary: Compute payload capacity across all compression presets
+      description: >
+        Uploads a cover (image or video) and returns the maximum payload
+        capacity for every compression preset, computed from the high-texture
+        DCT block count (image) or usable I-frame DCT coefficient slots (video)
+        at each preset's target quality. The cover type is detected server-side
+        and the cover/payload matrix is enforced there:
+        IMAGE cover -> {TEXT_MESSAGE, TEXT_FILE};
+        VIDEO cover -> {TEXT_MESSAGE, TEXT_FILE, IMAGE}.
+        Invalid combinations return 400.
+
+        NOTE: modeled as POST (not GET) because a browser cannot attach a
+        multipart file body to a GET request.
+      parameters:
+        - name: payload_type
+          in: query
+          required: true
+          description: TEXT_MESSAGE | TEXT_FILE | IMAGE
+          schema:
+            $ref: "#/components/schemas/PayloadType"
+        - name: compression_preset
+          in: query
+          required: false
+          description: Channel compression preset (NO_COMPRESSION | CHAT_STANDARD | CHAT_HD)
+          schema:
+            $ref: "#/components/schemas/CompressionPreset"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [cover]
+              properties:
+                cover:
+                  type: string
+                  format: binary
+                  description: Cover image or video file
+      responses:
+        "200":
+          description: Capacity for every preset
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CapacityResponse"
+        "400":
+          description: Invalid cover/payload combination or unreadable cover
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /stego/image/encode:
+    post:
+      operationId: stegoImageEncode
+      tags: [stego]
+      summary: Embed a payload into an image cover
+      description: >
+        Embeds an HSTG v2 container into an image cover. PNG/BMP covers use the
+        lossless spatial-LSB engine; JPEG covers use the block DCT-QIM engine.
+        Returns the stego image bytes.
+        `compress=false` (default) skips DEFLATE; `compress=true` applies it,
+        and the container flag records which mode was used so decode needs no
+        extra parameter.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                cover:
+                  type: string
+                  format: binary
+                  description: Cover image (PNG/BMP/JPEG)
+                payload_type:
+                  type: string
+                  default: TEXT_MESSAGE
+                preset:
+                  type: string
+                  default: light
+                password:
+                  type: string
+                  default: ""
+                compress:
+                  type: boolean
+                  default: false
+                compression_preset:
+                  type: string
+                  enum: [NO_COMPRESSION, CHAT_STANDARD, CHAT_HD]
+                  default: NO_COMPRESSION
+                message:
+                  type: string
+                  default: ""
+                payload_file:
+                  type: string
+                  format: binary
+      responses:
+        "200":
+          description: Stego image bytes (PNG for LSB path, JPEG for DCT-QIM path)
+          content:
+            image/png:
+              schema: {}
+            image/jpeg:
+              schema: {}
+        "400":
+          description: Invalid cover/payload combination or payload too large
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /stego/image/decode:
+    post:
+      operationId: stegoImageDecode
+      tags: [stego]
+      summary: Extract the payload from a stego image
+      description: >
+        Reads the container back from a PNG/BMP (LSB) or JPEG (DCT-QIM) stego
+        image and returns the recovered payload.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [stego]
+              properties:
+                stego:
+                  type: string
+                  format: binary
+                  description: Stego image (PNG/JPEG)
+                password:
+                  type: string
+                  default: ""
+      responses:
+        "200":
+          description: Recovered payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DecodeResponse"
+        "400":
+          description: Wrong password, corrupted bytes, or not a stego image
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /stego/video/encode:
+    post:
+      operationId: stegoVideoEncode
+      tags: [stego]
+      summary: Embed a payload into a video cover
+      description: >
+        Embeds an HSTG v2 container into a video using the I-frame DCT-QIM
+        engine with an H.264 CRF re-encode. Returns the stego MP4 bytes.
+        `compress=false` (default) skips DEFLATE.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                cover:
+                  type: string
+                  format: binary
+                  description: Cover video
+                payload_type:
+                  type: string
+                  enum: [TEXT_MESSAGE, TEXT_FILE, IMAGE]
+                  default: TEXT_MESSAGE
+                preset:
+                  type: string
+                  default: standard
+                password:
+                  type: string
+                  default: ""
+                compress:
+                  type: boolean
+                  default: false
+                compression_preset:
+                  type: string
+                  enum: [NO_COMPRESSION, CHAT_STANDARD, CHAT_HD]
+                  default: NO_COMPRESSION
+                message:
+                  type: string
+                  default: ""
+                payload_file:
+                  type: string
+                  format: binary
+                payload_image:
+                  type: string
+                  format: binary
+      responses:
+        "200":
+          description: Stego MP4 bytes
+          content:
+            video/mp4:
+              schema: {}
+        "400":
+          description: Invalid cover/payload or payload too large
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /stego/video/decode:
+    post:
+      operationId: stegoVideoDecode
+      tags: [stego]
+      summary: Extract the payload from a stego video
+      description: Reads the container back from a video and returns its payload.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [stego]
+              properties:
+                stego:
+                  type: string
+                  format: binary
+                  description: Stego video
+                password:
+                  type: string
+                  default: ""
+      responses:
+        "200":
+          description: Recovered payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DecodeResponse"
+        "400":
+          description: Wrong password, corrupted bytes, or not a stego video
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+components:
+  schemas:
+    HealthStatus:
+      type: object
+      properties:
+        status:
+          type: string
+      required:
+        - status
+    PayloadType:
+      type: string
+      enum: [TEXT_MESSAGE, TEXT_FILE, IMAGE]
+    CompressionPreset:
+      type: string
+      enum: [NO_COMPRESSION, CHAT_STANDARD, CHAT_HD]
+    CoverType:
+      type: string
+      enum: [IMAGE, VIDEO]
+    DecodeResponse:
+      type: object
+      required: [payload_type, container_version]
+      properties:
+        payload_type:
+          $ref: "#/components/schemas/PayloadType"
+        container_version:
+          type: number
+        original_filename:
+          type: string
+          nullable: true
+        mime_type:
+          type: string
+          nullable: true
+        message:
+          type: string
+          nullable: true
+        payload_base64:
+          type: string
+          nullable: true
+        compressed:
+          type: boolean
+          nullable: true
+    PresetCapacity:
+      type: object
+      required: [id, name, description, technique, expected_ber, survivability_description]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        technique:
+          type: string
+        expected_ber:
+          type: number
+        survivability_description:
+          type: string
+        compression_preset:
+          type: string
+          nullable: true
+        text_compression_factor:
+          type: number
+          nullable: true
+        target_quality_factor:
+          type: number
+          nullable: true
+        max_bytes_text_message:
+          type: number
+          nullable: true
+        max_bytes_text_file:
+          type: number
+          nullable: true
+        target_crf:
+          type: number
+          nullable: true
+        max_bytes_per_minute_text_message:
+          type: number
+          nullable: true
+        max_bytes_per_minute_text_file:
+          type: number
+          nullable: true
+        max_bytes_image:
+          type: number
+          nullable: true
+    CapacityResponse:
+      type: object
+      required: [cover_type, payload_type, compression_preset, allowed_payload_types, container_version, presets]
+      properties:
+        cover_type:
+          $ref: "#/components/schemas/CoverType"
+        payload_type:
+          $ref: "#/components/schemas/PayloadType"
+        compression_preset:
+          $ref: "#/components/schemas/CompressionPreset"
+        allowed_payload_types:
+          type: array
+          items:
+            $ref: "#/components/schemas/PayloadType"
+        container_version:
+          type: number
+        presets:
+          type: array
+          items:
+            $ref: "#/components/schemas/PresetCapacity"
+    ErrorResponse:
+      type: object
+      required: [detail]
+      properties:
+        detail:
+          type: string
+
