@@ -1,12 +1,9 @@
-# StealthWeave — Harpocrates
+# Harpocrates
 
 Steganography research platform: hide, extract, and analyze hidden data in images,
 audio, and links. Python backend (classical stego library + metrics) and a
 client-side React/TypeScript frontend sharing a byte-compatible wire format
 (HSTG header + AES-256-GCM + CRC32 + LSB).
-
-> **Note:** this repo name is a mirror/renamed upstream of the internal project
-> codename *Harpocrates*.
 
 ## Repository layout
 
@@ -15,27 +12,29 @@ Harpocrates/
 ├── backend/              Python stego library (LSB, adaptive, audio, link, steganalysis, metrics) + FastAPI scaffold
 │   └── modules/          the working stego engines (image/audio/link/steganalysis)
 │   └── tests/            pytest suite
-├── StealthWeave/         Replit pnpm workspace (React 19 + Vite + shadcn/ui)
+├── frontend/              Replit pnpm workspace (React 19 + Vite + shadcn/ui)
 │   ├── artifacts/harpocrates/   main client-side app (primary UI)
 │   ├── artifacts/api-server/    Express 5 (currently GET /api/healthz only)
 │   ├── artifacts/mockup-sandbox/ shadcn component sandbox
 │   └── lib/              Orval-generated api clients + api-spec (OpenAPI) + Drizzle db client
 ├── docs/HOW_IT_WORKS.md  design documentation (PDF generated)
+├── WORK_AND_FAILURES.md  work report + failure log (single ledger)
+├── AGENT_RULES.md        living rules for the AI coding agent
 ├── message/              sample payloads (HTML + image)
 ├── codebase_and_repo_audit.md  single source of truth for reuse/build-fresh decisions
-└── evaluation/           (empty scaffold: results/ + test_corpus/)
+└── evaluation/           synthetic corpus + benchmarks + results
 ```
 
 ## Remote
 
-```
-origin  git@github.com:Failing-Comp-Science/StealthWeave.git
-```
+The git remote currently points at a GitHub repository whose name still reflects the
+earlier (reverted) project name. **This is pending a rename on GitHub.** The origin
+URL is configured in `.git/config`; see `AGENT_RULES.md` §9 for the pending action.
 
 ## Development
 
 - **Backend:** `cd backend && python -m pytest` (Python 3.9, deps in `requirements.txt`).
-- **Frontend:** `cd StealthWeave && pnpm install && pnpm dev` (Node 24, pnpm workspace).
+- **Frontend:** `cd frontend && pnpm install && pnpm dev` (Node 24, pnpm workspace).
 
 ## Git hygiene
 

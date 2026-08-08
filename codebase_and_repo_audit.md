@@ -6,7 +6,7 @@
 > reading this file and reuse what the "Reuse map" lists before writing any new code.**
 > This is not a one-off step.
 >
-> Audit date: 2026-08-07. Scope: `backend/`, `StealthWeave/`, `references/`, `docs/`, `evaluation/`.
+> Audit date: 2026-08-07. Scope: `backend/`, `frontend/`, `references/`, `docs/`, `evaluation/`.
 
 ---
 
@@ -15,7 +15,7 @@
 - There are **two parallel, non-integrated implementations** of the text-in-image feature:
   1. **Python backend** (`backend/modules/`) — full classical stego library (image LSB + adaptive,
      audio time/STFT, link URL/ZWC, steganalysis, metrics). Well-structured, tested with pytest.
-  2. **TypeScript frontend** (`StealthWeave/artifacts/harpocrates/`) — a **100% client-side** React app
+  2. **TypeScript frontend** (`frontend/artifacts/harpocrates/`) — a **100% client-side** React app
      that re-implements the *identical wire format* (HSTG header + AES-256-GCM + CRC32 + LSB) in the
      browser using WebCrypto + Canvas. It **never calls the backend.**
 - The backend FastAPI app scaffold (`backend/app/`) is **empty stubs**. There is no wired REST API,
@@ -53,7 +53,7 @@ Harpocrates/
 │   └── requirements.txt
 ├── docs/HOW_IT_WORKS.md        Thorough backend design doc (frontend section is now outdated)
 ├── evaluation/{results,test_corpus}/   ← EMPTY scaffold
-├── StealthWeave/                   Replit pnpm workspace (Node 24, TS 5.9)
+├── frontend/                      Replit pnpm workspace (Node 24, TS 5.9)
 │   ├── artifacts/harpocrates/  main React+Vite app (client-side stego) ← PRIMARY UI
 │   ├── artifacts/api-server/   Express 5 (only GET /api/healthz)
 │   ├── artifacts/mockup-sandbox/  shadcn component sandbox
@@ -94,8 +94,8 @@ Harpocrates/
 - `backend/modules/image_stego/adaptive.py` — `SUNIWARDEmbedder` (Sobel-cost adaptive LSB, keyless deterministic extraction via LSB-masked cost map + stable argsort).
 
 **Frontend (TypeScript, client-side — the one users actually run):**
-- `StealthWeave/artifacts/harpocrates/src/lib/stego.ts` — `embedMessage(ImageData,msg,pw)` / `extractMessage(ImageData,pw)` / `crc32`. Re-implements the **exact HSTG wire format** and AES-256-GCM/PBKDF2-100k so images are byte-compatible with the Python backend. Embeds **1 LSB per RGB channel, sequential raster order, alpha untouched**.
-- `StealthWeave/artifacts/harpocrates/src/App.tsx` — all UI + canvas glue (`loadImageData`, `encodeFile`, download/copy). Uses Canvas `getImageData`/`putImageData`/`toBlob`.
+- `frontend/artifacts/harpocrates/src/lib/stego.ts` — `embedMessage(ImageData,msg,pw)` / `extractMessage(ImageData,pw)` / `crc32`. Re-implements the **exact HSTG wire format** and AES-256-GCM/PBKDF2-100k so images are byte-compatible with the Python backend. Embeds **1 LSB per RGB channel, sequential raster order, alpha untouched**.
+- `frontend/artifacts/harpocrates/src/App.tsx` — all UI + canvas glue (`loadImageData`, `encodeFile`, download/copy). Uses Canvas `getImageData`/`putImageData`/`toBlob`.
 
 > **Compatibility note:** frontend `stego.ts` = **1 bit/channel sequential only**. Backend `LSBEmbedder`
 > supports 1–3 bits + random order. They are interoperable only in the 1-bit sequential, matching-flags case.
@@ -106,9 +106,9 @@ Harpocrates/
 
 - **Stack:** React 19 + Vite + TypeScript; router = **wouter** (`App.tsx:5`, routes at `App.tsx:288` `Router()`: `/`, `/encode`, `/decode`, `NotFound`). Data layer = `@tanstack/react-query` (provider mounted but **no queries issued**). Styling = **Tailwind v4** (`@import 'tailwindcss'` in `src/index.css`) + **shadcn/ui "new-york"** (`components.json`).
 - **Entry:** `src/main.tsx` → `App.tsx`. Vite config requires `PORT` + `BASE_PATH` env (`vite.config.ts`). Path alias `@ → src`.
-- **Color tokens / theme:** `StealthWeave/artifacts/harpocrates/src/index.css` — CSS variables in `:root`/`.dark` (`--primary 349 72% 48%` crimson, `--accent` gold, `--background`, `--card`, etc.) mapped via `@theme inline`. **Also a second bespoke palette** at `index.css:436` (`--crimson`, `--ink`, `--paper`, `--gold`) driving the hand-rolled instrument UI.
+- **Color tokens / theme:** `frontend/artifacts/harpocrates/src/index.css` — CSS variables in `:root`/`.dark` (`--primary 349 72% 48%` crimson, `--accent` gold, `--background`, `--card`, etc.) mapped via `@theme inline`. **Also a second bespoke palette** at `index.css:436` (`--crimson`, `--ink`, `--paper`, `--gold`) driving the hand-rolled instrument UI.
 - **Typography scale:** `--app-font-sans: 'DM Sans'`, `--app-font-serif: 'Instrument Serif'`, `--app-font-mono: 'Space Mono'` (`index.css:143`). `--radius: 0.5rem`.
-- **shadcn/ui primitives (56)** in `StealthWeave/artifacts/harpocrates/src/components/ui/` — extend these instead of duplicating. Key ones with exported names:
+- **shadcn/ui primitives (56)** in `frontend/artifacts/harpocrates/src/components/ui/` — extend these instead of duplicating. Key ones with exported names:
 
 | Primitive | File | Exports |
 |---|---|---|
@@ -134,10 +134,10 @@ Harpocrates/
 - **NOTE:** there is **no shadcn Dropzone/FileUpload/PasswordInput primitive**. The existing app uses **custom** components in `App.tsx`: `ImageDropZone` (`App.tsx:119`, native drag/drop + hidden `<input type=file>`), `ImagePreview` (`App.tsx:142`), `PasswordInput` (`App.tsx:152`, show/hide toggle). No `react-dropzone` dependency.
 
 **Frontend API layer (currently vestigial):**
-- `StealthWeave/artifacts/api-server/` — **Express 5** (`src/app.ts`): `pino-http`, `cors()` (open, no allowlist), `express.json()`, `urlencoded`. Only route: **`GET /api/healthz`** (`src/routes/health.ts`). Port from `process.env.PORT`. `cookie-parser` is a dep but **not wired**. **No auth.**
-- `StealthWeave/lib/api-client-react/` — **Orval v8.5.3** react-query client over native `fetch` (`src/custom-fetch.ts`); base URL `/api` (`lib/api-spec/orval.config.ts`); optional `setBaseUrl()` / `setAuthTokenGetter()` (Bearer). Generated hook `useHealthCheck` is **unused**.
-- `StealthWeave/lib/api-spec/openapi.yaml` — OpenAPI 3.1, only `/healthz`. **This is the codegen source of truth** — new endpoints should be added here then `pnpm --filter @workspace/api-spec run codegen`.
-- `StealthWeave/lib/db/src/schema/index.ts` — Drizzle schema is **empty** (`export {}`), client exists in `lib/db/src/index.ts` (node-postgres). Requires `DATABASE_URL`.
+- `frontend/artifacts/api-server/` — **Express 5** (`src/app.ts`): `pino-http`, `cors()` (open, no allowlist), `express.json()`, `urlencoded`. Only route: **`GET /api/healthz`** (`src/routes/health.ts`). Port from `process.env.PORT`. `cookie-parser` is a dep but **not wired**. **No auth.**
+- `frontend/lib/api-client-react/` — **Orval v8.5.3** react-query client over native `fetch` (`src/custom-fetch.ts`); base URL `/api` (`lib/api-spec/orval.config.ts`); optional `setBaseUrl()` / `setAuthTokenGetter()` (Bearer). Generated hook `useHealthCheck` is **unused**.
+- `frontend/lib/api-spec/openapi.yaml` — OpenAPI 3.1, only `/healthz`. **This is the codegen source of truth** — new endpoints should be added here then `pnpm --filter @workspace/api-spec run codegen`.
+- `frontend/lib/db/src/schema/index.ts` — Drizzle schema is **empty** (`export {}`), client exists in `lib/db/src/index.ts` (node-postgres). Requires `DATABASE_URL`.
 
 ---
 
@@ -193,10 +193,10 @@ Keep all three at arm's length: **reference concepts and cite them, re-implement
 - Libraries already available: `numpy, scipy(.fft/.fftpack), opencv-python(cv2.dct), scikit-image, Pillow, cryptography, imageio(-ffmpeg), torch 2.1.2, scikit-learn, pandas`.
 
 **Frontend — extend these (do not duplicate):**
-- Wire-format lib: `StealthWeave/artifacts/harpocrates/src/lib/stego.ts` (HSTG + AES-GCM in browser) — extend for new container/format work; keep byte-compat with backend.
+- Wire-format lib: `frontend/artifacts/harpocrates/src/lib/stego.ts` (HSTG + AES-GCM in browser) — extend for new container/format work; keep byte-compat with backend.
 - UI glue + custom components already built: `App.tsx` `ImageDropZone`, `ImagePreview`, `PasswordInput` (reuse/relocate into `components/` rather than rebuilding).
 - Design system: all 56 shadcn primitives in `src/components/ui/` (Button, Card, Progress, Input, Textarea, Label, Alert, Tabs, Dialog, Sheet, Select, Slider, Form, Badge, Toaster/Sonner…), tokens & fonts in `src/index.css`, `cn()` in `src/lib/utils.ts`.
-- API plumbing (if/when we go server-side): Express app `StealthWeave/artifacts/api-server/src/app.ts`, OpenAPI source `StealthWeave/lib/api-spec/openapi.yaml` (+ `orval.config.ts` codegen), react-query client `StealthWeave/lib/api-client-react/`, Drizzle client `StealthWeave/lib/db/`.
+- API plumbing (if/when we go server-side): Express app `frontend/artifacts/api-server/src/app.ts`, OpenAPI source `frontend/lib/api-spec/openapi.yaml` (+ `orval.config.ts` codegen), react-query client `frontend/lib/api-client-react/`, Drizzle client `frontend/lib/db/`.
 
 **Reference (MIT — code-reusable):**
 - `references/videoseal/*` (neural image/video watermark, ffmpeg/PyAV, eval metrics).
@@ -213,14 +213,14 @@ Keep all three at arm's length: **reference concepts and cite them, re-implement
 5. **StegExpose-style batch steganalysis + evaluation harness** — extend `steganalysis/attacks.py` and populate `evaluation/{results,test_corpus}`; build PSNR/SSIM/BER/ROC/AUC batch runner (patterns from videoseal evals + our `metrics.py`). GBRAS-Net is unlicensed → clean-room if a CNN detector is wanted.
 6. **Server-integrated UI path (optional)** — if the app moves off client-side: define endpoints in `openapi.yaml`, regen the client, add real Drizzle tables (schema currently empty), and add **auth** (none exists in api-server today).
 7. **Reusable UI primitives not in shadcn set** — a proper `Dropzone`/`FileUpload` and `PasswordInput` as shared `components/` (currently one-off inside `App.tsx`); a metrics/results display component for the evaluation UI.
-8. **Format/container work** — any new multi-file or multi-modal container format must extend `PayloadHeader` (bump `HEADER_VERSION`) and mirror it in `StealthWeave/.../lib/stego.ts` to preserve interop.
+8. **Format/container work** — any new multi-file or multi-modal container format must extend `PayloadHeader` (bump `HEADER_VERSION`) and mirror it in `frontend/.../lib/stego.ts` to preserve interop.
 
 ---
 
 ## 8. Cross-cutting cautions for later prompts
 
-- Keep the **HSTG header + AES-GCM byte format identical** across Python and TS or images stop being interchangeable. Any change → bump `HEADER_VERSION` in **both** `backend/modules/base.py` and `StealthWeave/artifacts/harpocrates/src/lib/stego.ts`.
+- Keep the **HSTG header + AES-GCM byte format identical** across Python and TS or images stop being interchangeable. Any change → bump `HEADER_VERSION` in **both** `backend/modules/base.py` and `frontend/artifacts/harpocrates/src/lib/stego.ts`.
 - **PNG/lossless only** for LSB/DCT carriers on the client; JPEG re-encode destroys spatial LSB.
 - **License hygiene:** cite openstego/GBRAS-Net/AlphaSteg as *references*; never paste their code. Prefer MIT (videoseal, javid) or standard PyPI libs.
-- `docs/HOW_IT_WORKS.md` says "frontend is empty" — **that is outdated**; the client-side app in `StealthWeave/artifacts/harpocrates` is the current UI of record.
+- `docs/HOW_IT_WORKS.md` says "frontend is empty" — **that is outdated**; the client-side app in `frontend/artifacts/harpocrates` is the current UI of record.
 - Torch version mismatch (2.1.2 vs videoseal ≥2.3.1) must be resolved before any neural video work.
