@@ -24,7 +24,8 @@ export const HealthCheckResponse = zod.object({
  */
 export const StegoCapacityQueryParams = zod.object({
   "payload_type": zod.enum(['TEXT_MESSAGE', 'TEXT_FILE', 'IMAGE']).describe('TEXT_MESSAGE | TEXT_FILE | IMAGE'),
-  "compression_preset": zod.enum(['NO_COMPRESSION', 'CHAT_STANDARD', 'CHAT_HD']).optional().describe('Channel compression preset (NO_COMPRESSION | CHAT_STANDARD | CHAT_HD)')
+  "preset": zod.enum(['LOCAL_HIGH_CAPACITY', 'CHAT_STANDARD', 'CHAT_HD']).optional().describe('Unified user-facing preset (LOCAL_HIGH_CAPACITY | CHAT_STANDARD | CHAT_HD). An explicitly sent legacy `compression_preset` wins over it for old clients. Default: LOCAL_HIGH_CAPACITY.\n'),
+  "compression_preset": zod.enum(['NO_COMPRESSION', 'CHAT_STANDARD', 'CHAT_HD']).optional().describe('LEGACY: Channel compression preset (NO_COMPRESSION | CHAT_STANDARD | CHAT_HD)')
 })
 
 export const StegoCapacityBody = zod.object({
@@ -35,6 +36,7 @@ export const StegoCapacityResponse = zod.object({
   "cover_type": zod.enum(['IMAGE', 'VIDEO']),
   "payload_type": zod.enum(['TEXT_MESSAGE', 'TEXT_FILE', 'IMAGE']),
   "compression_preset": zod.enum(['NO_COMPRESSION', 'CHAT_STANDARD', 'CHAT_HD']),
+  "preset": zod.enum(['LOCAL_HIGH_CAPACITY', 'CHAT_STANDARD', 'CHAT_HD']).optional().describe('Unified user-facing preset echoed from the request; null when only a legacy compression_preset was sent'),
   "allowed_payload_types": zod.array(zod.enum(['TEXT_MESSAGE', 'TEXT_FILE', 'IMAGE'])),
   "container_version": zod.number(),
   "presets": zod.array(zod.object({
@@ -44,6 +46,8 @@ export const StegoCapacityResponse = zod.object({
   "technique": zod.string(),
   "expected_ber": zod.number(),
   "survivability_description": zod.string(),
+  "preset_id": zod.string().nullish().describe('Unified user-facing preset id of this row (LOCAL_HIGH_CAPACITY | CHAT_STANDARD | CHAT_HD)'),
+  "preset_label": zod.string().nullish().describe('Human-readable label of the unified preset'),
   "compression_preset": zod.string().nullish(),
   "text_compression_factor": zod.number().nullish(),
   "target_quality_factor": zod.number().nullish(),
@@ -62,19 +66,22 @@ export const StegoCapacityResponse = zod.object({
  * @summary Embed a payload into an image cover
  */
 export const stegoImageEncodeBodyPayloadTypeDefault = `TEXT_MESSAGE`;
-export const stegoImageEncodeBodyPresetDefault = `light`;
+export const stegoImageEncodeBodyPresetDefault = `LOCAL_HIGH_CAPACITY`;
 export const stegoImageEncodeBodyPasswordDefault = ``;
 export const stegoImageEncodeBodyCompressDefault = false;
 export const stegoImageEncodeBodyCompressionPresetDefault = `NO_COMPRESSION`;
+export const stegoImageEncodeBodyCarrierPresetDefault = `chat_standard`;
 export const stegoImageEncodeBodyMessageDefault = ``;
 
 export const StegoImageEncodeBody = zod.object({
   "cover": zod.instanceof(File).optional().describe('Cover image (PNG\/BMP\/JPEG)'),
   "payload_type": zod.string().default(stegoImageEncodeBodyPayloadTypeDefault),
-  "preset": zod.string().default(stegoImageEncodeBodyPresetDefault),
+  "preset": zod.string().default(stegoImageEncodeBodyPresetDefault).describe('Unified preset (LOCAL_HIGH_CAPACITY | CHAT_STANDARD | CHAT_HD); legacy tokens (light | standard | heavy, bare QF) still accepted'),
   "password": zod.string().default(stegoImageEncodeBodyPasswordDefault),
-  "compress": zod.boolean().default(stegoImageEncodeBodyCompressDefault),
-  "compression_preset": zod.enum(['NO_COMPRESSION', 'CHAT_STANDARD', 'CHAT_HD']).default(stegoImageEncodeBodyCompressionPresetDefault),
+  "compress": zod.boolean().default(stegoImageEncodeBodyCompressDefault).describe('LEGACY: Apply DEFLATE'),
+  "compression_preset": zod.enum(['NO_COMPRESSION', 'CHAT_STANDARD', 'CHAT_HD']).default(stegoImageEncodeBodyCompressionPresetDefault).describe('LEGACY: Channel compression preset'),
+  "carrier_preset": zod.enum(['chat_standard', 'chat_hd', 'lossless_high_capacity']).default(stegoImageEncodeBodyCarrierPresetDefault).describe('LEGACY: Carrier preset'),
+  "payload_compression": zod.enum(['NO_COMPRESSION', 'DEFLATE']).optional().describe('LEGACY: Explicit payload compression choice'),
   "message": zod.string().default(stegoImageEncodeBodyMessageDefault),
   "payload_file": zod.instanceof(File).optional()
 })
@@ -109,19 +116,22 @@ export const StegoImageDecodeResponse = zod.object({
  * @summary Embed a payload into a video cover
  */
 export const stegoVideoEncodeBodyPayloadTypeDefault = `TEXT_MESSAGE`;
-export const stegoVideoEncodeBodyPresetDefault = `standard`;
+export const stegoVideoEncodeBodyPresetDefault = `LOCAL_HIGH_CAPACITY`;
 export const stegoVideoEncodeBodyPasswordDefault = ``;
 export const stegoVideoEncodeBodyCompressDefault = false;
 export const stegoVideoEncodeBodyCompressionPresetDefault = `NO_COMPRESSION`;
+export const stegoVideoEncodeBodyCarrierPresetDefault = `chat_standard`;
 export const stegoVideoEncodeBodyMessageDefault = ``;
 
 export const StegoVideoEncodeBody = zod.object({
   "cover": zod.instanceof(File).optional().describe('Cover video'),
   "payload_type": zod.enum(['TEXT_MESSAGE', 'TEXT_FILE', 'IMAGE']).default(stegoVideoEncodeBodyPayloadTypeDefault),
-  "preset": zod.string().default(stegoVideoEncodeBodyPresetDefault),
+  "preset": zod.string().default(stegoVideoEncodeBodyPresetDefault).describe('Unified preset (LOCAL_HIGH_CAPACITY | CHAT_STANDARD | CHAT_HD); legacy tokens (light | standard | heavy, bare CRF) still accepted'),
   "password": zod.string().default(stegoVideoEncodeBodyPasswordDefault),
-  "compress": zod.boolean().default(stegoVideoEncodeBodyCompressDefault),
-  "compression_preset": zod.enum(['NO_COMPRESSION', 'CHAT_STANDARD', 'CHAT_HD']).default(stegoVideoEncodeBodyCompressionPresetDefault),
+  "compress": zod.boolean().default(stegoVideoEncodeBodyCompressDefault).describe('LEGACY: Apply DEFLATE'),
+  "compression_preset": zod.enum(['NO_COMPRESSION', 'CHAT_STANDARD', 'CHAT_HD']).default(stegoVideoEncodeBodyCompressionPresetDefault).describe('LEGACY: Channel compression preset'),
+  "carrier_preset": zod.enum(['chat_standard', 'chat_hd', 'lossless_high_capacity']).default(stegoVideoEncodeBodyCarrierPresetDefault).describe('LEGACY: Carrier preset'),
+  "payload_compression": zod.enum(['NO_COMPRESSION', 'DEFLATE']).optional().describe('LEGACY: Explicit payload compression choice'),
   "message": zod.string().default(stegoVideoEncodeBodyMessageDefault),
   "payload_file": zod.instanceof(File).optional(),
   "payload_image": zod.instanceof(File).optional()

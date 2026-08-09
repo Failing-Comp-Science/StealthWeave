@@ -252,6 +252,12 @@ if(stegoImageEncodeBody.compress !== undefined) {
 if(stegoImageEncodeBody.compression_preset !== undefined) {
  formData.append(`compression_preset`, stegoImageEncodeBody.compression_preset);
  }
+if(stegoImageEncodeBody.carrier_preset !== undefined) {
+ formData.append(`carrier_preset`, stegoImageEncodeBody.carrier_preset);
+ }
+if(stegoImageEncodeBody.payload_compression !== undefined) {
+ formData.append(`payload_compression`, stegoImageEncodeBody.payload_compression);
+ }
 if(stegoImageEncodeBody.message !== undefined) {
  formData.append(`message`, stegoImageEncodeBody.message);
  }
@@ -425,6 +431,12 @@ if(stegoVideoEncodeBody.compress !== undefined) {
  }
 if(stegoVideoEncodeBody.compression_preset !== undefined) {
  formData.append(`compression_preset`, stegoVideoEncodeBody.compression_preset);
+ }
+if(stegoVideoEncodeBody.carrier_preset !== undefined) {
+ formData.append(`carrier_preset`, stegoVideoEncodeBody.carrier_preset);
+ }
+if(stegoVideoEncodeBody.payload_compression !== undefined) {
+ formData.append(`payload_compression`, stegoVideoEncodeBody.payload_compression);
  }
 if(stegoVideoEncodeBody.message !== undefined) {
  formData.append(`message`, stegoVideoEncodeBody.message);

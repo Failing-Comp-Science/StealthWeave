@@ -77,6 +77,7 @@ app.add_middleware(
         "X-Stego-Container-Bytes", "X-Stego-CRF",
         "X-Stego-Iterations", "X-Stego-Residual-Bits",
         "X-Stego-Blocks-Eligible", "X-Stego-Blocks-Used",
+        "X-Stego-Preset",
     ],
 )
 

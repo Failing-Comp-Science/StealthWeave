@@ -27,6 +27,15 @@ export const CompressionPreset = {
   CHAT_HD: 'CHAT_HD',
 } as const;
 
+export type Preset = typeof Preset[keyof typeof Preset];
+
+
+export const Preset = {
+  LOCAL_HIGH_CAPACITY: 'LOCAL_HIGH_CAPACITY',
+  CHAT_STANDARD: 'CHAT_STANDARD',
+  CHAT_HD: 'CHAT_HD',
+} as const;
+
 export type CoverType = typeof CoverType[keyof typeof CoverType];
 
 
@@ -52,6 +61,10 @@ export interface PresetCapacity {
   technique: string;
   expected_ber: number;
   survivability_description: string;
+  /** Unified user-facing preset id of this row (LOCAL_HIGH_CAPACITY | CHAT_STANDARD | CHAT_HD) */
+  preset_id?: string | null;
+  /** Human-readable label of the unified preset */
+  preset_label?: string | null;
   compression_preset?: string | null;
   text_compression_factor?: number | null;
   target_quality_factor?: number | null;
@@ -67,6 +80,8 @@ export interface CapacityResponse {
   cover_type: CoverType;
   payload_type: PayloadType;
   compression_preset: CompressionPreset;
+  /** Unified user-facing preset echoed from the request; null when only a legacy compression_preset was sent */
+  preset?: Preset;
   allowed_payload_types: PayloadType[];
   container_version: number;
   presets: PresetCapacity[];
@@ -82,7 +97,11 @@ export type StegoCapacityParams = {
  */
 payload_type: PayloadType;
 /**
- * Channel compression preset (NO_COMPRESSION | CHAT_STANDARD | CHAT_HD)
+ * Unified user-facing preset (LOCAL_HIGH_CAPACITY | CHAT_STANDARD | CHAT_HD). An explicitly sent legacy `compression_preset` wins over it for old clients. Default: LOCAL_HIGH_CAPACITY.
+ */
+preset?: Preset;
+/**
+ * LEGACY: Channel compression preset (NO_COMPRESSION | CHAT_STANDARD | CHAT_HD)
  */
 compression_preset?: CompressionPreset;
 };
@@ -92,6 +111,9 @@ export type StegoCapacityBody = {
   cover: Blob;
 };
 
+/**
+ * LEGACY: Channel compression preset
+ */
 export type StegoImageEncodeBodyCompressionPreset = typeof StegoImageEncodeBodyCompressionPreset[keyof typeof StegoImageEncodeBodyCompressionPreset];
 
 
@@ -101,14 +123,44 @@ export const StegoImageEncodeBodyCompressionPreset = {
   CHAT_HD: 'CHAT_HD',
 } as const;
 
+/**
+ * LEGACY: Carrier preset
+ */
+export type StegoImageEncodeBodyCarrierPreset = typeof StegoImageEncodeBodyCarrierPreset[keyof typeof StegoImageEncodeBodyCarrierPreset];
+
+
+export const StegoImageEncodeBodyCarrierPreset = {
+  chat_standard: 'chat_standard',
+  chat_hd: 'chat_hd',
+  lossless_high_capacity: 'lossless_high_capacity',
+} as const;
+
+/**
+ * LEGACY: Explicit payload compression choice
+ */
+export type StegoImageEncodeBodyPayloadCompression = typeof StegoImageEncodeBodyPayloadCompression[keyof typeof StegoImageEncodeBodyPayloadCompression];
+
+
+export const StegoImageEncodeBodyPayloadCompression = {
+  NO_COMPRESSION: 'NO_COMPRESSION',
+  DEFLATE: 'DEFLATE',
+} as const;
+
 export type StegoImageEncodeBody = {
   /** Cover image (PNG/BMP/JPEG) */
   cover?: Blob;
   payload_type?: string;
+  /** Unified preset (LOCAL_HIGH_CAPACITY | CHAT_STANDARD | CHAT_HD); legacy tokens (light | standard | heavy, bare QF) still accepted */
   preset?: string;
   password?: string;
+  /** LEGACY: Apply DEFLATE */
   compress?: boolean;
+  /** LEGACY: Channel compression preset */
   compression_preset?: StegoImageEncodeBodyCompressionPreset;
+  /** LEGACY: Carrier preset */
+  carrier_preset?: StegoImageEncodeBodyCarrierPreset;
+  /** LEGACY: Explicit payload compression choice */
+  payload_compression?: StegoImageEncodeBodyPayloadCompression;
   message?: string;
   payload_file?: Blob;
 };
@@ -128,6 +180,9 @@ export const StegoVideoEncodeBodyPayloadType = {
   IMAGE: 'IMAGE',
 } as const;
 
+/**
+ * LEGACY: Channel compression preset
+ */
 export type StegoVideoEncodeBodyCompressionPreset = typeof StegoVideoEncodeBodyCompressionPreset[keyof typeof StegoVideoEncodeBodyCompressionPreset];
 
 
@@ -137,14 +192,44 @@ export const StegoVideoEncodeBodyCompressionPreset = {
   CHAT_HD: 'CHAT_HD',
 } as const;
 
+/**
+ * LEGACY: Carrier preset
+ */
+export type StegoVideoEncodeBodyCarrierPreset = typeof StegoVideoEncodeBodyCarrierPreset[keyof typeof StegoVideoEncodeBodyCarrierPreset];
+
+
+export const StegoVideoEncodeBodyCarrierPreset = {
+  chat_standard: 'chat_standard',
+  chat_hd: 'chat_hd',
+  lossless_high_capacity: 'lossless_high_capacity',
+} as const;
+
+/**
+ * LEGACY: Explicit payload compression choice
+ */
+export type StegoVideoEncodeBodyPayloadCompression = typeof StegoVideoEncodeBodyPayloadCompression[keyof typeof StegoVideoEncodeBodyPayloadCompression];
+
+
+export const StegoVideoEncodeBodyPayloadCompression = {
+  NO_COMPRESSION: 'NO_COMPRESSION',
+  DEFLATE: 'DEFLATE',
+} as const;
+
 export type StegoVideoEncodeBody = {
   /** Cover video */
   cover?: Blob;
   payload_type?: StegoVideoEncodeBodyPayloadType;
+  /** Unified preset (LOCAL_HIGH_CAPACITY | CHAT_STANDARD | CHAT_HD); legacy tokens (light | standard | heavy, bare CRF) still accepted */
   preset?: string;
   password?: string;
+  /** LEGACY: Apply DEFLATE */
   compress?: boolean;
+  /** LEGACY: Channel compression preset */
   compression_preset?: StegoVideoEncodeBodyCompressionPreset;
+  /** LEGACY: Carrier preset */
+  carrier_preset?: StegoVideoEncodeBodyCarrierPreset;
+  /** LEGACY: Explicit payload compression choice */
+  payload_compression?: StegoVideoEncodeBodyPayloadCompression;
   message?: string;
   payload_file?: Blob;
   payload_image?: Blob;

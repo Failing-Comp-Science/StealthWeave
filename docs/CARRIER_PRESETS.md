@@ -1,11 +1,14 @@
 # Harpocrates — Carrier Presets (backend + frontend)
 
-> Status: **implemented end-to-end (2026-08-09)** — backend catalog,
-> encode/decode params, frontend selection UI, and a benchmark matrix.
+> Status: **consolidated into the unified preset axis (2026-08-09)** — the
+> user-facing API now exposes a single `preset` field (`LOCAL_HIGH_CAPACITY |
+> CHAT_STANDARD | CHAT_HD`); see `docs/UNIFIED_PRESETS.md` for the current
+> contract. This document records the original two-axis design and the
+> internal engine-tier catalogue it evolved from.
 >
 > A **carrier preset** selects *how the cover is embedded* (engine + tier
-> quality). It is orthogonal to the channel **compression preset**
-> (`NO_COMPRESSION | CHAT_STANDARD | CHAT_HD`), which selects container
+> quality). It used to be orthogonal to the channel **compression preset**
+> (`NO_COMPRESSION | CHAT_STANDARD | CHAT_HD`), which selected container
 > packaging only — see `docs/COMPRESSION_PRESETS.md`.
 
 ## Why
@@ -36,11 +39,17 @@ Each preset declares a `payloadCompressionDefault`: `chat_standard` and
 
 ## Backend semantics
 
-- Encode endpoints (`/api/stego/encode`, `/api/stego/image/encode`,
-  `/api/stego/video/encode`) accept `carrier_preset` (Form) and
-  `payload_compression` (Form, one of `NO_COMPRESSION | DEFLATE`).
-- **Precedence for the DEFLATE decision** (locked by tests in
-  `tests/test_api_carrier_payload_compression.py`):
+- Since 2026-08-09 the encode endpoints accept a single `preset` form field
+  (unified id or legacy token). The legacy `carrier_preset` /
+  `payload_compression` / `compress` fields are still accepted and only win
+  when they disagree with the default — full precedence in
+  `docs/UNIFIED_PRESETS.md`.
+- The carrier presets below now live as internal engine tiers in
+  `backend/modules/capacity/presets.py`, mapped from unified presets via
+  `UNIFIED_TO_ENGINE_TIER` in `unified_presets.py`
+  (`LOCAL_HIGH_CAPACITY`→light, `CHAT_HD`→standard, `CHAT_STANDARD`→heavy).
+- **Precedence for the DEFLATE decision** (legacy contract, still locked by
+  tests in `tests/test_api_carrier_payload_compression.py`):
 
   1. explicit `payload_compression` field wins;
   2. else the carrier's `payloadCompressionDefault` **only when a non-default
@@ -64,8 +73,12 @@ Each preset declares a `payloadCompressionDefault`: `chat_standard` and
 
 ## Frontend semantics (`encode.tsx`)
 
-- Step 04 renders the carrier preset cards (testids `carrier-*`,
-  `carrier-cap-*`); step 06 renders the payload compression picker (testids
+- **2026-08-09 consolidation:** step 04 now renders the unified preset cards
+  (testids `preset-*`, `preset-cap-*`); the step-06 payload-compression picker
+  was removed. See `docs/UNIFIED_PRESETS.md` for the current UI contract. The
+  sections below describe the previous two-axis UI and are kept as history.
+- Step 04 rendered the carrier preset cards (testids `carrier-*`,
+  `carrier-cap-*`); step 06 rendered the payload compression picker (testids
   `payload-compression-NO_COMPRESSION`, `payload-compression-DEFLATE`).
 - Selecting a carrier re-runs the live capacity fit check (`refetchCapacity`);
   the tier id is mapped via `carrierPresetToTierId` (PNG/BMP → the single

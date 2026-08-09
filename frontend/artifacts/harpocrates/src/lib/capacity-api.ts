@@ -8,15 +8,12 @@
  * `ApiError` (whose message carries the server's `detail`), and the generated
  * enum/response types.
  *
- * The endpoint returns capacity for EVERY compression preset in one call and
- * enforces the cover/payload matrix server-side. The channel-level
- * `compression_preset` (NO_COMPRESSION | CHAT_STANDARD | CHAT_HD) is forwarded
+ * The endpoint returns capacity for EVERY engine preset in one call and
+ * enforces the cover/payload matrix server-side. The single user-facing
+ * ``preset`` axis (LOCAL_HIGH_CAPACITY | CHAT_STANDARD | CHAT_HD) is forwarded
  * as a query param so the returned caps reflect the preset-aware capacity
- * model (Chat presets scale TEXT_FILE capacity by the ~1.35x DEFLATE factor).
- * The carrier-level preset (chat_standard | chat_hd | lossless_high_capacity)
- * does NOT change the capacity model: each carrier preset maps onto one of the
- * engine tiers the endpoint already reports, so the Encode page derives
- * per-carrier caps client-side.
+ * model (CHAT_* presets scale TEXT_FILE capacity by the ~1.35x DEFLATE factor;
+ * LOCAL models it conservatively at 1.0).
  * This adapter maps the backend shape onto the UI's existing
  * `CompressionPreset` shape (so the Encode page's preset picker and live
  * capacity check keep working unchanged), converting the server enum
@@ -32,7 +29,7 @@ import {
   type PresetCapacity,
 } from "@workspace/api-client-react";
 import type { DropFile } from "@/components/instrument/file-drop-zone";
-import type { ChannelCompressionPreset, CompressionPreset, PayloadType } from "@/lib/encode-decode-mock";
+import type { CompressionPreset, PayloadType, UnifiedPresetId } from "@/lib/encode-decode-mock";
 
 /** Error the pages can surface via Toast/Alert (carries server 400 detail). */
 export class CapacityError extends Error {
@@ -103,12 +100,12 @@ function toUiPreset(
 async function callCapacity(
   drop: DropFile,
   payloadType: PayloadType,
-  compressionPreset: ChannelCompressionPreset = "NO_COMPRESSION",
+  preset: UnifiedPresetId,
 ): Promise<CapacityResponse> {
   try {
     const params = {
       payload_type: UI_TO_API[payloadType],
-      compression_preset: compressionPreset,
+      preset,
     };
     return await stegoCapacity(
       { cover: drop.file },
@@ -136,14 +133,16 @@ export interface CoverAnalysis {
 
 /**
  * Drop-in replacement for `mockAnalyzeCover`: one request returns every preset
- * plus the allowed payload types for the detected cover type.
+ * plus the allowed payload types for the detected cover type. `preset` is the
+ * single user-facing preset axis echoed to the backend (its TEXT_FILE factor
+ * shapes the returned caps).
  */
 export async function analyzeCover(
   drop: DropFile,
-  compressionPreset: ChannelCompressionPreset = "NO_COMPRESSION",
+  preset: UnifiedPresetId = "LOCAL_HIGH_CAPACITY",
 ): Promise<CoverAnalysis> {
   const coverKind: "image" | "video" = drop.kind === "video" ? "video" : "image";
-  const res = await callCapacity(drop, "text", compressionPreset);
+  const res = await callCapacity(drop, "text", preset);
   const durationSec = drop.durationSec ?? 0;
   const presets = res.presets.map((p) => toUiPreset(p, coverKind, durationSec));
   const payloadTypes = res.allowed_payload_types.map((t) => API_TO_UI[t]);

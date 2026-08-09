@@ -50,10 +50,19 @@ paths:
           description: TEXT_MESSAGE | TEXT_FILE | IMAGE
           schema:
             $ref: "#/components/schemas/PayloadType"
+        - name: preset
+          in: query
+          required: false
+          description: >
+            Unified user-facing preset (LOCAL_HIGH_CAPACITY | CHAT_STANDARD |
+            CHAT_HD). An explicitly sent legacy `compression_preset` wins over
+            it for old clients. Default: LOCAL_HIGH_CAPACITY.
+          schema:
+            $ref: "#/components/schemas/Preset"
         - name: compression_preset
           in: query
           required: false
-          description: Channel compression preset (NO_COMPRESSION | CHAT_STANDARD | CHAT_HD)
+          description: "LEGACY: Channel compression preset (NO_COMPRESSION | CHAT_STANDARD | CHAT_HD)"
           schema:
             $ref: "#/components/schemas/CompressionPreset"
       requestBody:
@@ -109,17 +118,29 @@ paths:
                   default: TEXT_MESSAGE
                 preset:
                   type: string
-                  default: light
+                  default: LOCAL_HIGH_CAPACITY
+                  description: Unified preset (LOCAL_HIGH_CAPACITY | CHAT_STANDARD | CHAT_HD); legacy tokens (light | standard | heavy, bare QF) still accepted
                 password:
                   type: string
                   default: ""
                 compress:
                   type: boolean
                   default: false
+                  description: "LEGACY: Apply DEFLATE"
                 compression_preset:
                   type: string
                   enum: [NO_COMPRESSION, CHAT_STANDARD, CHAT_HD]
                   default: NO_COMPRESSION
+                  description: "LEGACY: Channel compression preset"
+                carrier_preset:
+                  type: string
+                  enum: [chat_standard, chat_hd, lossless_high_capacity]
+                  default: chat_standard
+                  description: "LEGACY: Carrier preset"
+                payload_compression:
+                  type: string
+                  enum: [NO_COMPRESSION, DEFLATE]
+                  description: "LEGACY: Explicit payload compression choice"
                 message:
                   type: string
                   default: ""
@@ -202,17 +223,29 @@ paths:
                   default: TEXT_MESSAGE
                 preset:
                   type: string
-                  default: standard
+                  default: LOCAL_HIGH_CAPACITY
+                  description: Unified preset (LOCAL_HIGH_CAPACITY | CHAT_STANDARD | CHAT_HD); legacy tokens (light | standard | heavy, bare CRF) still accepted
                 password:
                   type: string
                   default: ""
                 compress:
                   type: boolean
                   default: false
+                  description: "LEGACY: Apply DEFLATE"
                 compression_preset:
                   type: string
                   enum: [NO_COMPRESSION, CHAT_STANDARD, CHAT_HD]
                   default: NO_COMPRESSION
+                  description: "LEGACY: Channel compression preset"
+                carrier_preset:
+                  type: string
+                  enum: [chat_standard, chat_hd, lossless_high_capacity]
+                  default: chat_standard
+                  description: "LEGACY: Carrier preset"
+                payload_compression:
+                  type: string
+                  enum: [NO_COMPRESSION, DEFLATE]
+                  description: "LEGACY: Explicit payload compression choice"
                 message:
                   type: string
                   default: ""
@@ -283,6 +316,9 @@ components:
     CompressionPreset:
       type: string
       enum: [NO_COMPRESSION, CHAT_STANDARD, CHAT_HD]
+    Preset:
+      type: string
+      enum: [LOCAL_HIGH_CAPACITY, CHAT_STANDARD, CHAT_HD]
     CoverType:
       type: string
       enum: [IMAGE, VIDEO]
@@ -325,6 +361,14 @@ components:
           type: number
         survivability_description:
           type: string
+        preset_id:
+          type: string
+          nullable: true
+          description: Unified user-facing preset id of this row (LOCAL_HIGH_CAPACITY | CHAT_STANDARD | CHAT_HD)
+        preset_label:
+          type: string
+          nullable: true
+          description: Human-readable label of the unified preset
         compression_preset:
           type: string
           nullable: true
@@ -362,6 +406,9 @@ components:
           $ref: "#/components/schemas/PayloadType"
         compression_preset:
           $ref: "#/components/schemas/CompressionPreset"
+        preset:
+          $ref: "#/components/schemas/Preset"
+          description: Unified user-facing preset echoed from the request; null when only a legacy compression_preset was sent
         allowed_payload_types:
           type: array
           items:

@@ -55,6 +55,14 @@ from modules.capacity.accounting import spatial_container_budget
 from modules.capacity.dct_embedder import CapacityError, encode_jpeg, extract_payload
 from modules.capacity.image_capacity import dct_eligible_bits
 from modules.capacity.presets import IMAGE_PRESETS, VIDEO_PRESETS
+from modules.capacity.unified_presets import (
+    UnifiedPresetId,
+    get_unified_preset,
+    is_unified_preset_token,
+    legacy_engine_tier_to_unified,
+    resolve_preset as resolve_unified_preset,
+    unified_to_container_preset,
+)
 from modules.capacity.video_capacity import VideoProbeError
 from modules.image_stego.lsb import LSBEmbedder
 from modules.metrics import psnr, ssim
@@ -126,6 +134,61 @@ def _resolve_container_preset(api_preset: CompressionPreset, compress: bool) -> 
     return _API_TO_CONTAINER_PRESET[api_preset]
 
 
+#: The single user-facing preset axis. The UI sends ONE ``preset`` id; all
+#: legacy parameters (carrier_preset / compression_preset / compress / bare
+#: light|standard|heavy tokens) remain accepted for backward compatibility and
+#: resolve onto the same axis (see unified_presets.resolve_preset).
+_UNIFIED_PRESET_IDS = {
+    pid.value for pid in UnifiedPresetId
+}
+
+
+def _annotate_unified(row: dict) -> dict:
+    """Attach the unified preset id/label to a capacity-model row.
+
+    Engine-tier rows (light/standard/heavy) map 1:1 onto the unified ids; the
+    lossless spatial row (PNG/BMP covers) is the LOCAL_HIGH_CAPACITY preset.
+    """
+    tier = row.get("id")
+    if tier == "lossless_high_capacity":
+        pid = UnifiedPresetId.LOCAL_HIGH_CAPACITY
+    else:
+        try:
+            pid = legacy_engine_tier_to_unified(tier)
+        except ValueError:
+            return row
+    enriched = dict(row)
+    enriched["preset_id"] = pid.value
+    enriched["preset_label"] = get_unified_preset(pid).label
+    return enriched
+
+
+def _container_preset_from_unified(pid: UnifiedPresetId) -> ContainerCompressionPreset:
+    """Channel-level compression preset the capacity model should use for a
+    unified preset (TEXT_FILE compression multiplier)."""
+    return unified_to_container_preset(pid)
+
+
+def _resolve_requested_capacity_preset(
+    preset: str, compression_preset: CompressionPreset
+) -> tuple[Optional[UnifiedPresetId], ContainerCompressionPreset]:
+    """Resolve the capacity endpoint's preset axis.
+
+    The unified ``preset`` query param is the first-class axis (default
+    LOCAL_HIGH_CAPACITY). A legacy ``compression_preset`` explicitly sent by
+    old clients (anything other than the NO_COMPRESSION default) wins over it
+    so legacy callers keep their compression semantics; NO_COMPRESSION maps to
+    the same factor (1.0) as LOCAL_HIGH_CAPACITY, so there is no conflict.
+    Returns ``(unified_id_or_None, container_preset)``.
+    """
+    if compression_preset != CompressionPreset.NO_COMPRESSION:
+        return None, _resolve_container_preset(compression_preset, compress=False)
+    if is_unified_preset_token(preset):
+        pid = get_unified_preset(preset).id
+        return pid, _container_preset_from_unified(pid)
+    return None, _resolve_container_preset(compression_preset, compress=False)
+
+
 def _detect_cover_type(upload: UploadFile) -> CoverType:
     content_type = (upload.content_type or "").lower()
     name = (upload.filename or "").lower()
@@ -176,6 +239,7 @@ def _stego_headers(
     ssim_val: Optional[float] = None,
     ber_val: Optional[float] = None,
     container_bytes: Optional[int] = None,
+    preset_id: Optional[str] = None,
 ) -> dict:
     """X-Stego-* response headers shared by the encode endpoints."""
     headers = {
@@ -194,6 +258,8 @@ def _stego_headers(
         headers["X-Stego-CRF"] = str(crf)
     if container_bytes is not None:
         headers["X-Stego-Container-Bytes"] = str(int(container_bytes))
+    if preset_id is not None:
+        headers["X-Stego-Preset"] = preset_id
     return headers
 
 
@@ -346,9 +412,13 @@ def _decode_response(header: ContainerHeaderV2, payload: bytes) -> DecodeRespons
 )
 async def stego_capacity(
     payload_type: str = Query(..., description="TEXT_MESSAGE | TEXT_FILE | IMAGE"),
+    preset: str = Query(
+        "LOCAL_HIGH_CAPACITY",
+        description="Unified carrier preset (LOCAL_HIGH_CAPACITY | CHAT_STANDARD | CHAT_HD)",
+    ),
     compression_preset: CompressionPreset = Query(
         CompressionPreset.NO_COMPRESSION,
-        description="Channel compression preset (NO_COMPRESSION | CHAT_STANDARD | CHAT_HD)",
+        description="LEGACY: Channel compression preset (NO_COMPRESSION | CHAT_STANDARD | CHAT_HD)",
     ),
     cover: UploadFile = File(..., description="Cover image or video"),
 ) -> CapacityResponse:
@@ -358,7 +428,9 @@ async def stego_capacity(
     data = await cover.read()
     _validate_upload(data, is_video=cover_type == CoverType.VIDEO)
 
-    container_preset = _resolve_container_preset(compression_preset, compress=False)
+    unified_preset, container_preset = _resolve_requested_capacity_preset(
+        preset, compression_preset
+    )
 
     if cover_type == CoverType.IMAGE:
         rgb = _decode_image(data)
@@ -395,9 +467,15 @@ async def stego_capacity(
         cover_type=cover_type,
         payload_type=validated_payload,
         compression_preset=compression_preset,
+        preset=unified_preset.value if unified_preset else None,
         allowed_payload_types=ALLOWED_PAYLOADS[cover_type],
         container_version=HEADER_VERSION_V2,
-        presets=[_preset_with_accounting(p, cover_type, container_preset, validated_payload) for p in presets],
+        presets=[
+            _preset_with_accounting(
+                _annotate_unified(p), cover_type, container_preset, validated_payload
+            )
+            for p in presets
+        ],
     )
 
 
@@ -495,6 +573,130 @@ def _resolve_video_preset(raw: str) -> int:
     if not 18 <= crf <= 32:
         raise StegoError(StegoErrorCode.PRESET_INVALID, "CRF must be in 18..32.")
     return crf
+
+
+class _EffectiveEncodeParams:
+    """Complete engine configuration resolved for ONE encode request.
+
+    The unified ``preset`` is the single axis; legacy parameters are resolved
+    onto the same shape so every path embeds with identical semantics.
+    """
+
+    __slots__ = (
+        "preset_id", "preset_label", "qf", "crf", "delta", "bpc",
+        "payload_comp", "container_tier_id",
+    )
+
+    def __init__(
+        self,
+        *,
+        preset_id: Optional[UnifiedPresetId],
+        qf: int, crf: int, delta: float, bpc: int,
+        payload_comp: str,
+        container_tier_id: CompressionPresetId,
+    ):
+        self.preset_id = preset_id
+        self.preset_label = get_unified_preset(preset_id).label if preset_id else None
+        self.qf = qf
+        self.crf = crf
+        self.delta = delta
+        self.bpc = bpc
+        self.payload_comp = payload_comp
+        self.container_tier_id = container_tier_id
+
+
+def _resolve_effective_encode_params(
+    *,
+    cover_type: CoverType,
+    carrier_format: str,
+    payload_type: PayloadType,
+    preset_token: str,
+    carrier_preset: CarrierPreset,
+    payload_compression: Optional[PayloadCompression],
+    compress: bool,
+) -> _EffectiveEncodeParams:
+    """Resolve the single preset axis for an encode request.
+
+    Precedence (locked by tests):
+      1. explicit unified ``preset`` id (LOCAL_HIGH_CAPACITY | CHAT_STANDARD |
+         CHAT_HD) -> complete resolved configuration;
+      2. legacy ``carrier_preset`` (chat_standard | chat_hd |
+         lossless_high_capacity) when it is an explicit non-default choice;
+      3. legacy ``preset`` token (light | standard | heavy, or a bare QF/CRF)
+         for old clients;
+    then the payload-compression ladder: explicit ``payload_compression`` wins
+    over the legacy ``compress`` flag wins over the preset's default.
+    """
+    is_image = cover_type == CoverType.IMAGE
+
+    if is_unified_preset_token(preset_token):
+        cfg = resolve_unified_preset(
+            preset_token, "image" if is_image else "video",
+            carrier_format, payload_type.value,
+        )
+        return _EffectiveEncodeParams(
+            preset_id=cfg.preset_id,
+            qf=cfg.jpeg_quality if is_image else 0,
+            crf=cfg.video_crf if not is_image else 0,
+            delta=cfg.qim_strength,
+            bpc=cfg.bits_per_channel,
+            payload_comp="DEFLATE",  # deflate_if_smaller policy; overridden below
+            container_tier_id=CompressionPresetId[cfg.engine_tier.upper()],
+        )
+
+    if carrier_preset != CarrierPreset.CHAT_STANDARD:
+        # Legacy carrier preset axis (explicit non-default choice).
+        cp = get_carrier_preset(carrier_preset)
+        qf = cp.image_quality_factor if is_image else 0
+        crf = cp.video_crf if not is_image else 0
+        delta = 2.0 if qf >= 90 else 1.0
+        tier = (_carrier_preset_for_qf(qf) if is_image else _carrier_preset_for_crf(crf))
+        return _EffectiveEncodeParams(
+            preset_id=None,
+            qf=qf, crf=crf, delta=delta, bpc=cp.lsb_bits_per_channel,
+            payload_comp=cp.payload_compression_default,
+            container_tier_id=tier,
+        )
+
+    # Legacy preset token path (old clients): light | standard | heavy, or a
+    # bare quality factor / CRF.
+    if is_image:
+        qf = _resolve_preset(preset_token)
+        crf = 0
+        tier = _carrier_preset_for_qf(qf)
+        delta = 2.0 if qf >= 90 else 1.0
+    else:
+        crf = _resolve_video_preset(preset_token)
+        qf = 0
+        tier = _carrier_preset_for_crf(crf)
+        delta = 2.0
+    return _EffectiveEncodeParams(
+        preset_id=None,
+        qf=qf, crf=crf, delta=delta,
+        bpc=carrier_preset_to_lsb_bpc(CarrierPreset.CHAT_STANDARD),
+        payload_comp=None,  # legacy callers keep the compress-flag semantics
+        container_tier_id=tier,
+    )
+
+
+def _apply_payload_compression(
+    params: _EffectiveEncodeParams,
+    payload_compression: Optional[PayloadCompression],
+    compress: bool,
+) -> str:
+    """Payload-compression ladder: explicit param > legacy compress flag >
+    the preset's default."""
+    if payload_compression is not None:
+        return (
+            "DEFLATE"
+            if payload_compression == PayloadCompression.DEFLATE
+            else "NO_COMPRESSION"
+        )
+    if compress:
+        return "DEFLATE"
+    if params.payload_comp is None:
+        return "NO_COMPRESSION"
+    return params.payload_comp
 
 
 async def _assemble_payload(
@@ -595,12 +797,13 @@ def _encode_video(
             os.unlink(tmp_stego)
 
 
-def _encode_jpeg(rgb: np.ndarray, container: bytes, qf: int) -> tuple[bytes, object]:
+def _encode_jpeg(rgb: np.ndarray, container: bytes, qf: int, delta: float = 1.0) -> tuple[bytes, object]:
     """Embed a prebuilt container into a JPEG cover with an EXACT fit check.
 
     Compares the serialized container's exact channel-bit demand against the
     cover's measured DCT-QIM carrier capacity (same derate the capacity model
     advertises) and rejects with ``IMAGE_CAPACITY_EXCEEDED`` BEFORE embedding.
+    ``delta`` is the QIM quantization step (higher = more margin, coarser).
     """
     available = dct_eligible_bits(rgb, qf)
     needed = _preflight_container_bits(len(container))
@@ -611,8 +814,6 @@ def _encode_jpeg(rgb: np.ndarray, container: bytes, qf: int) -> tuple[bytes, obj
             f"{needed} carrier bits, cover offers {available}. Use a larger "
             "cover, a higher-capacity preset, or a smaller/compressed payload.",
         )
-    # Delta trade-off: 2.0 (more margin) at high QF; 1.0 (finer levels) at low QF.
-    delta = 2.0 if qf >= 90 else 1.0
     try:
         return encode_jpeg(rgb, container, qf, delta=delta)
     except CapacityError as exc:
@@ -629,18 +830,22 @@ def _encode_jpeg(rgb: np.ndarray, container: bytes, qf: int) -> tuple[bytes, obj
 async def stego_encode(
     cover: UploadFile = File(..., description="Cover image or video"),
     payload_type: str = Form("TEXT_MESSAGE", description="TEXT_MESSAGE | TEXT_FILE | IMAGE"),
-    # NEW: carrier preset (first-class carrier axis)
+    # PRIMARY: the single user-facing preset axis (unified presets). Legacy
+    # tokens (light | standard | heavy, or a bare QF / CRF) are still accepted
+    # in this field for old clients.
+    preset: str = Form(
+        "LOCAL_HIGH_CAPACITY",
+        description="Unified preset: LOCAL_HIGH_CAPACITY | CHAT_STANDARD | CHAT_HD (legacy: light | standard | heavy)",
+    ),
+    # LEGACY: kept for backward compatibility (see _resolve_effective_encode_params)
     carrier_preset: CarrierPreset = Form(
         CarrierPreset.CHAT_STANDARD,
-        description="Carrier preset: chat_standard | chat_hd | lossless_high_capacity",
+        description="LEGACY: Carrier preset: chat_standard | chat_hd | lossless_high_capacity",
     ),
-    # NEW: payload compression (independent of carrier)
     payload_compression: Optional[PayloadCompression] = Form(
         None,
-        description="Payload compression: NO_COMPRESSION | DEFLATE (explicit choice wins over the carrier default)",
+        description="LEGACY: Payload compression: NO_COMPRESSION | DEFLATE (explicit choice wins over the preset default)",
     ),
-    # LEGACY: kept for backward compatibility
-    preset: str = Form("standard", description="LEGACY: light | standard | heavy, or JPEG QF / CRF"),
     password: str = Form("", description="Optional encryption password"),
     compress: bool = Form(False, description="LEGACY: Apply DEFLATE (legacy; use payload_compression)"),
     compression_preset: CompressionPreset = Form(
@@ -657,43 +862,17 @@ async def stego_encode(
     data = await cover.read()
     _validate_upload(data, is_video=cover_type == CoverType.VIDEO)
 
-    # ---- Resolve carrier preset & payload compression -----------------------
-    # Use new carrier_preset if provided (not default), else fall back to legacy preset
-    if carrier_preset != CarrierPreset.CHAT_STANDARD:
-        # New carrier preset provided - use it
-        cp = get_carrier_preset(carrier_preset)
-        if cover_type == CoverType.IMAGE:
-            qf = carrier_preset_to_image_qf(cp.id)
-            crf = carrier_preset_to_video_crf(cp.id)  # unused for image
-        else:
-            crf = carrier_preset_to_video_crf(cp.id)
-            qf = carrier_preset_to_image_qf(cp.id)  # unused for video
-        payload_comp = carrier_preset_to_payload_compression_default(cp.id)
-    else:
-        # Legacy path: use preset (light/standard/heavy) for QF/CRF
-        if cover_type == CoverType.VIDEO:
-            crf = _resolve_video_preset(preset)
-            qf = 0  # unused
-        else:
-            qf = _resolve_preset(preset)
-            crf = 0  # unused
-        payload_comp = None  # legacy callers keep legacy semantics (compress flag decides)
-
-    # Payload compression: explicit parameter wins over the carrier default;
-    # the legacy compress flag is the last resort for old clients.
-    if payload_compression is not None:
-        payload_comp = (
-            "DEFLATE"
-            if payload_compression == PayloadCompression.DEFLATE
-            else "NO_COMPRESSION"
-        )
-    elif compress:
-        payload_comp = "DEFLATE"
-    elif payload_comp is None:
-        payload_comp = "NO_COMPRESSION"
-
-    # Container compression preset (for HSTG container)
-    container_preset = _resolve_container_preset(compression_preset, compress)
+    # ---- Resolve the single preset axis (unified, with legacy fallbacks) ---
+    params = _resolve_effective_encode_params(
+        cover_type=cover_type,
+        carrier_format=(os.path.splitext(cover.filename or "")[1] or "").lstrip("."),
+        payload_type=validated,
+        preset_token=preset,
+        carrier_preset=carrier_preset,
+        payload_compression=payload_compression,
+        compress=compress,
+    )
+    payload_comp = _apply_payload_compression(params, payload_compression, compress)
 
     # ---- Assemble the HSTG v2 container payload ---------------------------
     payload_bytes, container_type, fname, mime = await _assemble_payload(
@@ -702,48 +881,45 @@ async def stego_encode(
 
     if cover_type == CoverType.VIDEO:
         # ---- VIDEO cover (I-frame DCT-QIM + H.264 CRF re-encode) ----------
-        carrier_preset_id = _carrier_preset_for_crf(crf)
         container = build_container(
             payload_bytes, container_type,
-            compression_preset=carrier_preset_id, password=password or None,
+            compression_preset=params.container_tier_id, password=password or None,
             original_filename=fname, mime_type=mime,
             compress=(payload_comp == "DEFLATE"), use_ecc=True,
         )
         stego_bytes, stats, psnr_db = _encode_video(
-            data, cover.filename or "", container, crf, password
+            data, cover.filename or "", container, params.crf, password
         )
         return Response(
             content=stego_bytes,
             media_type="video/mp4",
-            headers=_stego_headers(stats, crf=crf, psnr_db=psnr_db,
+            headers=_stego_headers(stats, crf=params.crf, psnr_db=psnr_db,
                                    ber_val=_bit_error_rate(stats),
-                                   container_bytes=len(container)),
+                                   container_bytes=len(container),
+                                   preset_id=params.preset_id.value if params.preset_id else None),
         )
 
     # ---- IMAGE cover: PNG/BMP -> lossless LSB, else block DCT-QIM ---------
     engine = _detect_image_engine_lenient(data)
     rgb = _decode_image(data)
     if engine == "lsb":
-        # Lossless LSB path - use carrier preset's LSB bits per channel
-        bpc = carrier_preset_to_lsb_bpc(carrier_preset if carrier_preset != CarrierPreset.CHAT_STANDARD else CarrierPreset.CHAT_STANDARD)
         container = build_container(
             payload_bytes, container_type,
-            compression_preset=CompressionPresetId.LIGHT, password=password or None,
+            compression_preset=params.container_tier_id, password=password or None,
             original_filename=fname, mime_type=mime,
             compress=(payload_comp == "DEFLATE"), use_ecc=True,
         )
-        png = _encode_lsb(data, container, password, bpc=bpc)
+        png = _encode_lsb(data, container, password, bpc=params.bpc)
         return Response(content=png, media_type="image/png",
                         headers=_lsb_metric_headers(rgb, png, len(container)))
 
-    carrier_preset_id = _carrier_preset_for_qf(qf)
     container = build_container(
         payload_bytes, container_type,
-        compression_preset=carrier_preset_id, password=password or None,
+        compression_preset=params.container_tier_id, password=password or None,
         original_filename=fname, mime_type=mime,
         compress=(payload_comp == "DEFLATE"), use_ecc=True,
     )
-    jpeg, stats = _encode_jpeg(rgb, container, qf)
+    jpeg, stats = _encode_jpeg(rgb, container, params.qf, delta=params.delta)
     return Response(
         content=jpeg,
         media_type="image/jpeg",
@@ -911,18 +1087,20 @@ def _extract_lsb(data: bytes, password: str) -> bytes:
 async def stego_image_encode(
     cover: UploadFile = File(..., description="Cover image (PNG/BMP/JPEG)"),
     payload_type: str = Form("TEXT_MESSAGE", description="TEXT_MESSAGE | TEXT_FILE"),
-    # NEW: carrier preset (first-class carrier axis)
+    # PRIMARY: the single user-facing preset axis (unified presets).
+    preset: str = Form(
+        "LOCAL_HIGH_CAPACITY",
+        description="Unified preset: LOCAL_HIGH_CAPACITY | CHAT_STANDARD | CHAT_HD (legacy: light | standard | heavy)",
+    ),
+    # LEGACY: kept for backward compatibility (see _resolve_effective_encode_params)
     carrier_preset: CarrierPreset = Form(
         CarrierPreset.CHAT_STANDARD,
-        description="Carrier preset: chat_standard | chat_hd | lossless_high_capacity",
+        description="LEGACY: Carrier preset: chat_standard | chat_hd | lossless_high_capacity",
     ),
-    # NEW: payload compression (independent of carrier)
     payload_compression: Optional[PayloadCompression] = Form(
         None,
-        description="Payload compression: NO_COMPRESSION | DEFLATE (explicit choice wins over the carrier default)",
+        description="LEGACY: Payload compression: NO_COMPRESSION | DEFLATE (explicit choice wins over the preset default)",
     ),
-    # LEGACY: kept for backward compatibility
-    preset: str = Form("light", description="LEGACY: light | standard | heavy, or a JPEG quality factor"),
     password: str = Form("", description="Optional encryption password"),
     compress: bool = Form(False, description="LEGACY: Apply DEFLATE (legacy; use payload_compression)"),
     compression_preset: CompressionPreset = Form(
@@ -940,31 +1118,17 @@ async def stego_image_encode(
     data = await cover.read()
     _validate_upload(data, is_video=False)
 
-    # ---- Resolve carrier preset & payload compression -----------------------
-    if carrier_preset != CarrierPreset.CHAT_STANDARD:
-        cp = get_carrier_preset(carrier_preset)
-        qf = carrier_preset_to_image_qf(cp.id)
-        payload_comp = carrier_preset_to_payload_compression_default(cp.id)
-        bpc = carrier_preset_to_lsb_bpc(cp.id)
-    else:
-        qf = _resolve_preset(preset)
-        payload_comp = None  # legacy callers keep legacy semantics (compress flag decides)
-        bpc = carrier_preset_to_lsb_bpc(CarrierPreset.CHAT_STANDARD)
-
-    # Payload compression: explicit parameter wins over the carrier default;
-    # the legacy compress flag is the last resort for old clients.
-    if payload_compression is not None:
-        payload_comp = (
-            "DEFLATE"
-            if payload_compression == PayloadCompression.DEFLATE
-            else "NO_COMPRESSION"
-        )
-    elif compress:
-        payload_comp = "DEFLATE"
-    elif payload_comp is None:
-        payload_comp = "NO_COMPRESSION"
-
-    container_preset = _resolve_container_preset(compression_preset, compress)
+    # ---- Resolve the single preset axis (unified, with legacy fallbacks) ---
+    params = _resolve_effective_encode_params(
+        cover_type=cover_type,
+        carrier_format=(os.path.splitext(cover.filename or "")[1] or "").lstrip("."),
+        payload_type=validated,
+        preset_token=preset,
+        carrier_preset=carrier_preset,
+        payload_compression=payload_compression,
+        compress=compress,
+    )
+    payload_comp = _apply_payload_compression(params, payload_compression, compress)
 
     engine = _detect_image_engine(data)
     payload_bytes, container_type, fname, mime = await _assemble_payload(
@@ -976,29 +1140,28 @@ async def stego_image_encode(
         container = build_container(
             payload_bytes,
             container_type,
-            compression_preset=CompressionPresetId.LIGHT,
+            compression_preset=params.container_tier_id,
             password=password or None,
             original_filename=fname,
             mime_type=mime,
             compress=(payload_comp == "DEFLATE"), use_ecc=True,
         )
-        png = _encode_lsb(data, container, password, bpc=bpc)
+        png = _encode_lsb(data, container, password, bpc=params.bpc)
         return Response(content=png, media_type="image/png",
                         headers=_lsb_metric_headers(cover_rgb, png, len(container)))
 
     # JPEG -> block DCT-QIM
     rgb = _decode_image(data)
-    carrier_preset_id = _carrier_preset_for_qf(qf)
     container = build_container(
         payload_bytes,
         container_type,
-        compression_preset=carrier_preset_id,
+        compression_preset=params.container_tier_id,
         password=password or None,
         original_filename=fname,
         mime_type=mime,
         compress=(payload_comp == "DEFLATE"), use_ecc=True,
     )
-    jpeg, stats = _encode_jpeg(rgb, container, qf)
+    jpeg, stats = _encode_jpeg(rgb, container, params.qf, delta=params.delta)
     return Response(
         content=jpeg,
         media_type="image/jpeg",
@@ -1066,18 +1229,20 @@ async def stego_image_decode(
 async def stego_video_encode(
     cover: UploadFile = File(..., description="Cover video"),
     payload_type: str = Form("TEXT_MESSAGE", description="TEXT_MESSAGE | TEXT_FILE | IMAGE"),
-    # NEW: carrier preset (first-class carrier axis)
+    # PRIMARY: the single user-facing preset axis (unified presets).
+    preset: str = Form(
+        "LOCAL_HIGH_CAPACITY",
+        description="Unified preset: LOCAL_HIGH_CAPACITY | CHAT_STANDARD | CHAT_HD (legacy: light | standard | heavy)",
+    ),
+    # LEGACY: kept for backward compatibility (see _resolve_effective_encode_params)
     carrier_preset: CarrierPreset = Form(
         CarrierPreset.CHAT_STANDARD,
-        description="Carrier preset: chat_standard | chat_hd | lossless_high_capacity",
+        description="LEGACY: Carrier preset: chat_standard | chat_hd | lossless_high_capacity",
     ),
-    # NEW: payload compression (independent of carrier)
     payload_compression: Optional[PayloadCompression] = Form(
         None,
-        description="Payload compression: NO_COMPRESSION | DEFLATE (explicit choice wins over the carrier default)",
+        description="LEGACY: Payload compression: NO_COMPRESSION | DEFLATE (explicit choice wins over the preset default)",
     ),
-    # LEGACY: kept for backward compatibility
-    preset: str = Form("standard", description="LEGACY: light | standard | heavy, or a CRF 18-32"),
     password: str = Form("", description="Optional encryption password"),
     compress: bool = Form(False, description="LEGACY: Apply DEFLATE (legacy; use payload_compression)"),
     compression_preset: CompressionPreset = Form(
@@ -1096,52 +1261,40 @@ async def stego_video_encode(
     data = await cover.read()
     _validate_upload(data, is_video=True)
 
-    # ---- Resolve carrier preset & payload compression -----------------------
-    if carrier_preset != CarrierPreset.CHAT_STANDARD:
-        cp = get_carrier_preset(carrier_preset)
-        crf = carrier_preset_to_video_crf(cp.id)
-        payload_comp = carrier_preset_to_payload_compression_default(cp.id)
-    else:
-        crf = _resolve_video_preset(preset)
-        payload_comp = None  # legacy callers keep legacy semantics (compress flag decides)
-
-    # Payload compression: explicit parameter wins over the carrier default;
-    # the legacy compress flag is the last resort for old clients.
-    if payload_compression is not None:
-        payload_comp = (
-            "DEFLATE"
-            if payload_compression == PayloadCompression.DEFLATE
-            else "NO_COMPRESSION"
-        )
-    elif compress:
-        payload_comp = "DEFLATE"
-    elif payload_comp is None:
-        payload_comp = "NO_COMPRESSION"
-
-    container_preset = _resolve_container_preset(compression_preset, compress)
+    # ---- Resolve the single preset axis (unified, with legacy fallbacks) ---
+    params = _resolve_effective_encode_params(
+        cover_type=cover_type,
+        carrier_format=(os.path.splitext(cover.filename or "")[1] or "").lstrip("."),
+        payload_type=validated,
+        preset_token=preset,
+        carrier_preset=carrier_preset,
+        payload_compression=payload_compression,
+        compress=compress,
+    )
+    payload_comp = _apply_payload_compression(params, payload_compression, compress)
 
     payload_bytes, container_type, fname, mime = await _assemble_payload(
         validated, message, payload_file, payload_image
     )
-    carrier_preset_id = _carrier_preset_for_crf(crf)
     container = build_container(
         payload_bytes,
         container_type,
-        compression_preset=carrier_preset_id,
+        compression_preset=params.container_tier_id,
         password=password or None,
         original_filename=fname,
         mime_type=mime,
         compress=(payload_comp == "DEFLATE"), use_ecc=True,
     )
     stego_bytes, stats, psnr_db = _encode_video(
-        data, cover.filename or "", container, crf, password
+        data, cover.filename or "", container, params.crf, password
     )
     return Response(
         content=stego_bytes,
         media_type="video/mp4",
-        headers=_stego_headers(stats, crf=crf, psnr_db=psnr_db,
+        headers=_stego_headers(stats, crf=params.crf, psnr_db=psnr_db,
                                ber_val=_bit_error_rate(stats),
-                               container_bytes=len(container)),
+                               container_bytes=len(container),
+                               preset_id=params.preset_id.value if params.preset_id else None),
     )
 
 

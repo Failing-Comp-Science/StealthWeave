@@ -31,20 +31,21 @@ test("no-compression encode -> decode round trip", async ({ page }) => {
   await page.getByTestId("input-secret-message").fill(SECRET);
   await expect(page.getByTestId("capacity-ok")).toBeVisible();
 
-  // 4. "No compression" is the default payload-compression mode; re-assert it
-  //    is selected.
-  await expect(page.getByTestId("payload-compression-NO_COMPRESSION")).toHaveClass(/selected/);
+  // 4. The single preset axis defaults to LOCAL_HIGH_CAPACITY; re-assert it is
+  //    selected. (The old carrier-preset and payload-compression controls were
+  //    folded into this one preset.)
+  await expect(page.getByTestId("preset-LOCAL_HIGH_CAPACITY")).toHaveClass(/selected/);
 
   // 5. Encode via the real backend, then verify the result panel reports the
-  //    chosen preset AND the header flag as NO COMPRESSION.
+  //    chosen preset AND the DEFLATE-if-smaller policy.
   await page.getByTestId("button-encode").click();
   const resultPanel = page.locator(".result-panel.complete");
   await expect(resultPanel).toBeVisible({ timeout: 30_000 });
   
-  // Expand the technical details panel to access compression info
+  // Expand the technical details panel to access preset/compression info
   await page.getByTestId("button-technical-details").click();
-  await expect(resultPanel).toContainText("No compression");
-  await expect(resultPanel).toContainText("NO COMPRESSION");
+  await expect(resultPanel).toContainText("Local / Pendrive — High Capacity");
+  await expect(resultPanel).toContainText("DEFLATE (IF SMALLER)");
 
   // Download the stego file via the download button (avoids Vite proxy body issue)
   const downloadPromise = page.waitForEvent("download");

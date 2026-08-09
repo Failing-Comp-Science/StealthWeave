@@ -343,8 +343,8 @@ def test_video_carrier_default_applies_when_field_absent(video_cover_bytes):
 
 
 def test_video_lossless_carrier_roundtrip(video_cover_bytes):
-    # lossless_high_capacity -> CRF 18, default payload compression
-    # NO_COMPRESSION; must round-trip exactly.
+    # lossless_high_capacity (legacy alias of the unified LOCAL_HIGH_CAPACITY)
+    # -> CRF 18, DEFLATE-if-smaller payload policy; must round-trip exactly.
     with tempfile.TemporaryDirectory() as td:
         r = client.post(
             V_ENCODE_URL,
@@ -361,4 +361,4 @@ def test_video_lossless_carrier_roundtrip(video_cover_bytes):
         assert d.status_code == 200, d.text
         body = d.json()
         assert body["message"] == TEXT
-        assert body["compressed"] is False
+        assert body["compressed"] is True  # DEFLATE-if-smaller shrinks the message

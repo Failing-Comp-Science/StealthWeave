@@ -439,7 +439,6 @@ body { background: var(--ink); color: var(--paper); font-family: var(--app-font-
 button, input, textarea { font: inherit; }
 button, a { -webkit-tap-highlight-color: transparent; }
 .harp-app { position: relative; min-height: 100dvh; overflow: hidden; background: radial-gradient(circle at 70% 8%, rgba(102, 14, 28, .15), transparent 31rem), var(--ink); }
-.grain { position: fixed; inset: 0; pointer-events: none; z-index: 20; opacity: .038; background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 140 140' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.72'/%3E%3C/svg%3E"); mix-blend-mode: screen; }
 .topbar { position: relative; z-index: 10; display: flex; align-items: center; justify-content: space-between; max-width: 1440px; margin: auto; padding: 27px 5.5vw; border-bottom: 1px solid rgba(255,255,255,.1); }
 .brand { display: flex; align-items: center; gap: 10px; color: var(--paper); font-size: 11px; letter-spacing: .2em; font-weight: 600; text-decoration: none; }
 .brand-mark { display: grid; width: 28px; height: 28px; place-items: center; border: 1px solid rgba(212, 167, 106, .72); border-radius: 50%; color: var(--gold); }

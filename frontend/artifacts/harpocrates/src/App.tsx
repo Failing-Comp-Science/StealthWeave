@@ -26,7 +26,6 @@ function AppShell({ children }: { children: ReactNode }) {
   const currentMode = location.includes("decode") ? "decode" : location.includes("encode") ? "encode" : "home";
   return (
     <div className="harp-app">
-      <div className="grain" aria-hidden="true" />
       <header className="topbar">
         <Link href="/" className="brand" data-testid="link-brand">
           <span className="brand-mark"><Orbit size={17} strokeWidth={1.5} /></span>

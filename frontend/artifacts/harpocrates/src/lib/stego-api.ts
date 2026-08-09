@@ -14,12 +14,13 @@
  * (see `runEmbed`) so the real per-encode PSNR/SSIM/BER can be read from the
  * X-Stego-* response headers the generated client discards.
  *
- * "No compression" mode: the encoder sends `compress=false` plus an explicit
- * `compression_preset=NO_COMPRESSION`; the container skips DEFLATE while
- * AES-256-GCM + RS-ECC stay active. Chat presets send the matching
- * `compression_preset` (and `compress=true`). Decode reads the container's
- * FLAG_COMPRESSED from the header and surfaces it in `compressed`, so the UI
- * can report "No Compression" / "Compressed".
+ * Preset axis: the UI sends ONE `preset` field (LOCAL_HIGH_CAPACITY |
+ * CHAT_STANDARD | CHAT_HD); the backend resolves it into the complete engine
+ * configuration (QF/CRF, QIM delta, LSB depth, container tier, DEFLATE-if-
+ * smaller compression policy). The legacy parameters (carrier_preset,
+ * payload_compression, compress, compression_preset) are no longer sent.
+ * Decode reads the container's FLAG_COMPRESSED from the header and surfaces it
+ * in `compressed`, so the UI can report "No Compression" / "Compressed".
  */
 import {
   stegoImageDecode,
@@ -30,12 +31,12 @@ import {
 } from "@workspace/api-client-react";
 import type { DropFile } from "@/components/instrument/file-drop-zone";
 import {
-  type ChannelCompressionPreset,
   type EmbedProgress,
   type EmbedResult,
   type ExtractProgress,
   type ExtractResult,
   type PayloadType,
+  type UnifiedPresetId,
 } from "@/lib/encode-decode-mock";
 
 /** UI payload id -> server enum. */
@@ -95,11 +96,8 @@ export interface EncodeInput {
   payloadType: PayloadType;
   payloadData: { text?: string; file?: File; size: number };
   password: string;
-  presetId: string;
-  compress: boolean;
-  channelPreset: ChannelCompressionPreset;
-  carrierPreset: string;
-  payloadCompression: "NO_COMPRESSION" | "DEFLATE";
+  /** Unified user-facing preset (LOCAL_HIGH_CAPACITY | CHAT_STANDARD | CHAT_HD). */
+  preset: UnifiedPresetId;
 }
 
 export type EncodeResult = EmbedResult & { stegoBlob: Blob; compressed: boolean };
@@ -121,7 +119,7 @@ export async function runEmbed(
   onProgress: (progress: EmbedProgress) => void,
   signal?: AbortSignal,
 ): Promise<EncodeResult> {
-  const { cover, payloadType, payloadData, password, presetId, compress, channelPreset, carrierPreset, payloadCompression } = input;
+  const { cover, payloadType, payloadData, password, preset } = input;
   const isVideo = cover.kind === "video";
 
   onProgress({ stage: "uploading", percent: 10, detail: "UPLOADING COVER + PAYLOAD" });
@@ -130,12 +128,8 @@ export async function runEmbed(
   const formData = new FormData();
   formData.append("cover", cover.file);
   formData.append("payload_type", UI_TO_API[payloadType]);
-  formData.append("preset", presetId);
-  formData.append("carrier_preset", carrierPreset);
-  formData.append("payload_compression", payloadCompression);
+  formData.append("preset", preset);
   formData.append("password", password);
-  formData.append("compress", compress.toString());
-  formData.append("compression_preset", channelPreset);
   if (payloadType === "text") {
     formData.append("message", payloadData.text ?? "");
   } else if (payloadData.file) {
@@ -162,13 +156,13 @@ export async function runEmbed(
     ssim: parseHeaderFloat(headers.get("X-Stego-SSIM")),
     ber: parseHeaderFloat(headers.get("X-Stego-BER")),
     encrypted: password.length > 0,
-    preset: presetId,
-    channelPreset,
-    carrierPreset,
-    payloadCompression,
+    preset,
     containerBytes: parseHeaderFloat(headers.get("X-Stego-Container-Bytes")),
     stegoBlob: blob,
-    compressed: compress,
+    // Every unified preset uses the DEFLATE-if-smaller policy: the container
+    // compresses the payload when (and only when) it actually shrinks it. The
+    // exact outcome is read back from the container flag at decode time.
+    compressed: true,
   };
 }
 

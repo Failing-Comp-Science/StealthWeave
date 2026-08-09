@@ -114,11 +114,24 @@ def test_image_carrier_default_applies_when_field_absent():
 
 
 def test_image_lossless_carrier_default_no_compression():
+    # lossless_high_capacity (alias of unified LOCAL_HIGH_CAPACITY): tiny
+    # message that does not shrink under DEFLATE -> DEFLATE-if-smaller skips it.
     body = _encode_decode(
         "/api/stego/image/encode", _png(), "cover.png", "image/png",
         carrier_preset="lossless_high_capacity",
     )
     assert body["compressed"] is False
+
+
+def test_image_lossless_carrier_default_deflate_if_smaller():
+    # Compressible message under the same preset -> DEFLATE applies (strictly
+    # smaller container; the lossless carrier default policy is
+    # "deflate_if_smaller", not a hard NO_COMPRESSION).
+    body = _encode_decode(
+        "/api/stego/image/encode", _png(), "cover.png", "image/png",
+        carrier_preset="lossless_high_capacity", message=MESSAGE_COMPRESSIBLE,
+    )
+    assert body["compressed"] is True
 
 
 def test_image_legacy_callers_keep_no_compression_semantics():

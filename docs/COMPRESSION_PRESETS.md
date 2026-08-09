@@ -1,7 +1,13 @@
 # Harpocrates — Compression Presets (backend)
 
 > Status: **structural support implemented**; numeric calibration **complete
-> (2026-08-08)**.
+> (2026-08-08)**. **2026-08-09: consolidated** — the channel preset
+> (`NO_COMPRESSION | CHAT_STANDARD | CHAT_HD`) is no longer a separate API
+> knob; every unified preset (`LOCAL_HIGH_CAPACITY | CHAT_STANDARD | CHAT_HD`)
+> requests `deflate_if_smaller`, and the capacity TEXT_FILE multiplier is the
+> only remaining preset-dependent bit (1.0 for LOCAL, 1.35 for CHAT_*). See
+> `docs/UNIFIED_PRESETS.md` for the current API contract. This document keeps
+> the calibration record.
 >
 > The backend exposes first-class, channel-level compression presets
 > (`NO_COMPRESSION`, `CHAT_STANDARD`, `CHAT_HD`) that drive the HSTG v2
@@ -63,27 +69,32 @@ through the preset abstraction, never a bare boolean.
 ## How it flows
 
 - **Container**: `build_container(payload, type, compression_preset=<carrier
-  id>, compress=<CompressionPreset>)`. The header still records the per-carrier
-  `CompressionPresetId` (light/standard/heavy = QF 95/85/75) as an orthogonal
-  axis; `FLAG_COMPRESSED` records whether DEFLATE actually ran.
+  id>, compress=True | CompressionPreset)`. The header still records the
+  per-carrier `CompressionPresetId` (light/standard/heavy = QF 95/85/75) as an
+  orthogonal axis; `FLAG_COMPRESSED` records whether DEFLATE actually ran.
+  Since 2026-08-09 the unified preset path always passes `compress=True` —
+  DEFLATE-if-smaller — and `FLAG_COMPRESSED` is what decode shows.
 - **Capacity**: `image_capacity(rgb, compression_preset=...)` and
   `video_capacity(path, duration_hint, compression_preset=...)` return the
   existing per-carrier rows, now augmented with `compression_preset` +
   `text_compression_factor`. TEXT_FILE capacity uses the preset factor
   (1.0 for NO_COMPRESSION → no inflation); TEXT_MESSAGE is unchanged.
-- **API**: `POST /api/stego/capacity?compression_preset=...` feeds the preset
-  through; the three encode endpoints accept a `compression_preset` Form field
-  (default `NO_COMPRESSION`) while keeping the legacy `compress: bool` Form
-  field for backward compatibility (a bare `compress=true` maps to
-  `CHAT_STANDARD`).
-- **Frontend (2026-08-08)**: the Encode page's "Compression preset" step is now
-  a 3-option channel-preset picker (`No compression` default | `Chat standard`
-  | `Chat HD`). Selecting one re-runs `POST /api/stego/capacity` with that
-  `compression_preset`, so the live "Payload fits" check reflects the
-  preset-aware model; the encode form sends both `compression_preset` and the
-  derived `compress`. The legacy two-option DEFLATE toggle was removed and the
-  former step-04 carrier preset was renamed "Carrier preset" to keep the two
-  axes distinct.
+- **API**: since 2026-08-09 the encode/capacity endpoints take a single
+  `preset` field; the legacy `compression_preset` form/query field is still
+  accepted (`NO_COMPRESSION` maps to `LOCAL_HIGH_CAPACITY`, CHAT_* pass
+  through) but loses to an explicit unified preset. The legacy `compress:
+  bool` form field also still works and wins over the preset policy when sent
+  explicitly. Every unified preset's own policy is `deflate_if_smaller`
+  (`compress=True` in `build_container`).
+- **Frontend (2026-08-09)**: the Encode page's preset step is now the unified
+  preset picker (`Local / Pendrive — High Capacity` default | `Chat Standard`
+  | `Chat HD`); the separate payload-compression step was removed. Selecting a
+  preset re-runs `POST /api/stego/capacity` with that `preset`, so the live
+  "Payload fits" check reflects the preset-aware model; the encode form sends
+  only `preset`. The result panel reports the resolved PRESET and the policy
+  label "DEFLATE (IF SMALLER)". Historical: the previous UI sent both
+  `compression_preset` and the derived `compress`, with a 3-option channel
+  picker and a two-option DEFLATE toggle.
 - **Per-encode metrics (2026-08-08)**: every encode response now carries
   `X-Stego-PSNR`, `X-Stego-SSIM` and `X-Stego-BER` headers, measured per
   request: image DCT-QIM compares the decoded stego JPEG against the cover

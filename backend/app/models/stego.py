@@ -85,6 +85,10 @@ class PresetCapacity(BaseModel):
     ``compression_preset`` / ``text_compression_factor`` echo the channel-level
     compression preset the capacity was computed under (e.g. NO_COMPRESSION =>
     factor 1.0).
+
+    ``preset_id`` / ``preset_label`` (NEW) name the UNIFIED user-facing preset
+    this row corresponds to (LOCAL_HIGH_CAPACITY / CHAT_STANDARD / CHAT_HD) —
+    the single preset axis the frontend presents.
     """
     id: str
     name: str
@@ -92,6 +96,10 @@ class PresetCapacity(BaseModel):
     technique: str
     expected_ber: float = Field(..., description="Modeled post-ECC BER at the preset target quality")
     survivability_description: str
+
+    # Unified user-facing preset axis (NEW)
+    preset_id: Optional[str] = None
+    preset_label: Optional[str] = None
 
     # Channel-level compression context (per-call, echoed into every carrier)
     compression_preset: Optional[str] = None
@@ -128,6 +136,9 @@ class CapacityResponse(BaseModel):
     cover_type: CoverType
     payload_type: PayloadType
     compression_preset: CompressionPreset
+    #: Unified user-facing preset axis (LOCAL_HIGH_CAPACITY | CHAT_STANDARD |
+    #: CHAT_HD); None when the request used a legacy compression_preset only.
+    preset: Optional[str] = None
     allowed_payload_types: List[PayloadType]
     container_version: int
     presets: List[PresetCapacity]
