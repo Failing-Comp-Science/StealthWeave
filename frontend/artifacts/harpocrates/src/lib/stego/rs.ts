@@ -172,13 +172,17 @@ function syndromes(msg: Uint8Array, nsym: number): number[] {
 
 /** Berlekamp-Massey error locator (reedsolo.rs_find_error_locator). */
 function findErrorLocator(synd: number[], nsym: number): number[] {
+  // `synd` is the Forney syndrome (prepended-0 trimmed, length === nsym).
+  // reedsolo indexes fsynd[i - j] with Python negative-index wrapping.
+  const syndLen = synd.length;
   let errLoc = [1];
   let oldLoc = [1];
   for (let i = 0; i < nsym; i++) {
-    const k = i;
-    let delta = synd[k];
+    let delta = synd[i];
     for (let j = 1; j < errLoc.length; j++) {
-      delta ^= gfMul(errLoc[-(j + 1)], synd[k - j]);
+      const idx = i - j;
+      const s = idx < 0 ? synd[syndLen + idx] : synd[idx];
+      delta ^= gfMul(errLoc[errLoc.length - (j + 1)], s);
     }
     oldLoc = [...oldLoc, 0];
     if (delta !== 0) {
@@ -203,13 +207,16 @@ function findErrorLocator(synd: number[], nsym: number): number[] {
 
 /**
  * Locate errors by brute-force Chien search (reedsolo.rs_find_errors).
+ * reedsolo passes the error locator REVERSED (highest degree first), which is
+ * what rs_correct_msg does: rs_find_errors(err_loc[::-1], nmess).
  * Returns error positions relative to the START of the codeword.
  */
 function findErrors(errLoc: number[], nmess: number): number[] {
+  const reversed = [...errLoc].reverse();
   const errs = errLoc.length - 1;
   const positions: number[] = [];
   for (let i = 0; i < nmess; i++) {
-    if (gfPolyEval(errLoc, gfPow(GENERATOR, i)) === 0) {
+    if (gfPolyEval(reversed, gfPow(GENERATOR, i)) === 0) {
       positions.push(nmess - 1 - i);
     }
   }
@@ -230,8 +237,8 @@ function findErrorEvaluator(synd: number[], errLoc: number[], nsym: number): num
 function rsFindErrataLocator(ePos: number[]): number[] {
   let eLoc = [1];
   for (const p of ePos) {
-    // multiply by (1 + generator^p * x)
-    eLoc = gfPolyMul(eLoc, [1, gfPow(GENERATOR, p)]);
+    // reedsolo multiplies by [gf_pow(generator, p), 1] == (a + x)
+    eLoc = gfPolyMul(eLoc, [gfPow(GENERATOR, p), 1]);
   }
   return eLoc;
 }
@@ -284,7 +291,7 @@ function rsCorrectBlock(msg: Uint8Array, nsym: number): Uint8Array {
     // error-free codeword: message = block minus trailing parity
     return msg.slice(0, msg.length - nsym);
   }
-  const errLoc = findErrorLocator(synd, nsym);
+  const errLoc = findErrorLocator(synd.slice(1), nsym);
   const errPos = findErrors(errLoc, msg.length);
   const corrected = correctErrata(msg, synd, errPos);
   // verify

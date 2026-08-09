@@ -31,7 +31,16 @@ export const TAG_SIZE = 16;
 export const KDF_ITERATIONS = 100_000;
 export const KEY_BITS = 256;
 
-async function deriveKey(password: string, salt: Uint8Array<ArrayBuffer>): Promise<CryptoKey> {
+/**
+ * Copy ``data`` into a fresh ``ArrayBuffer``-backed view. WebCrypto's
+ * ``BufferSource`` requires ``ArrayBufferView<ArrayBuffer>``; typed arrays
+ * built via ``subarray``/slicing can carry ``ArrayBufferLike``.
+ */
+function toArrayBufferView(data: Uint8Array): Uint8Array<ArrayBuffer> {
+  return new Uint8Array(data);
+}
+
+async function deriveKey(password: string, salt: Uint8Array): Promise<CryptoKey> {
   const material = await crypto.subtle.importKey(
     "raw",
     new TextEncoder().encode(password),
@@ -40,7 +49,7 @@ async function deriveKey(password: string, salt: Uint8Array<ArrayBuffer>): Promi
     ["deriveKey"],
   );
   return crypto.subtle.deriveKey(
-    { name: "PBKDF2", salt, iterations: KDF_ITERATIONS, hash: "SHA-256" },
+    { name: "PBKDF2", salt: toArrayBufferView(salt), iterations: KDF_ITERATIONS, hash: "SHA-256" },
     material,
     { name: "AES-GCM", length: KEY_BITS },
     false,
@@ -53,14 +62,14 @@ async function deriveKey(password: string, salt: Uint8Array<ArrayBuffer>): Promi
  * [salt 16][nonce 12][ciphertext + tag 16].
  */
 export async function encryptPayload(
-  plaintext: Uint8Array<ArrayBuffer>,
+  plaintext: Uint8Array,
   password: string,
-): Promise<Uint8Array<ArrayBuffer>> {
+): Promise<Uint8Array> {
   const salt = crypto.getRandomValues(new Uint8Array(SALT_SIZE));
   const nonce = crypto.getRandomValues(new Uint8Array(NONCE_SIZE));
   const key = await deriveKey(password, salt);
   const ciphertext = new Uint8Array(
-    await crypto.subtle.encrypt({ name: "AES-GCM", iv: nonce }, key, plaintext),
+    await crypto.subtle.encrypt({ name: "AES-GCM", iv: nonce }, key, toArrayBufferView(plaintext)),
   );
   const out = new Uint8Array(SALT_SIZE + NONCE_SIZE + ciphertext.length);
   out.set(salt, 0);
@@ -73,10 +82,7 @@ export async function encryptPayload(
  * AES-256-GCM decrypt (SteganoCrypto.decrypt_payload). Throws on wrong
  * password or corruption (the GCM tag authenticates).
  */
-export async function decryptPayload(
-  blob: Uint8Array<ArrayBuffer>,
-  password: string,
-): Promise<Uint8Array<ArrayBuffer>> {
+export async function decryptPayload(blob: Uint8Array, password: string): Promise<Uint8Array> {
   if (blob.length < SALT_SIZE + NONCE_SIZE + TAG_SIZE) {
     throw new Error("Encrypted payload is corrupt (too short)");
   }
@@ -85,7 +91,11 @@ export async function decryptPayload(
   const ciphertext = blob.slice(SALT_SIZE + NONCE_SIZE);
   const key = await deriveKey(password, salt);
   try {
-    const plaintext = await crypto.subtle.decrypt({ name: "AES-GCM", iv: nonce }, key, ciphertext);
+    const plaintext = await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv: nonce },
+      key,
+      toArrayBufferView(ciphertext),
+    );
     return new Uint8Array(plaintext);
   } catch {
     throw new Error("Decryption failed — the password is wrong or the image was altered");
@@ -132,7 +142,7 @@ export function unpackPayloadHeaderV1(data: Uint8Array): PayloadHeaderV1 {
 
 /** sha256 of ``data`` (hex string, backend hashlib.sha256(...).hexdigest()). */
 export async function sha256Hex(data: Uint8Array): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", data);
+  const digest = await crypto.subtle.digest("SHA-256", toArrayBufferView(data));
   return Array.from(new Uint8Array(digest))
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
@@ -140,5 +150,5 @@ export async function sha256Hex(data: Uint8Array): Promise<string> {
 
 /** sha256 of ``data`` as raw 32-byte digest. */
 export async function sha256Bytes(data: Uint8Array): Promise<Uint8Array> {
-  return new Uint8Array(await crypto.subtle.digest("SHA-256", data));
+  return new Uint8Array(await crypto.subtle.digest("SHA-256", toArrayBufferView(data)));
 }

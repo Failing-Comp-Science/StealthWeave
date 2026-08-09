@@ -9,16 +9,21 @@
  * is not guaranteed to produce byte-identical output (zlib level differs).
  */
 
+/** Copy into a fresh ArrayBuffer-backed view (BlobPart requires it). */
+function toBlobPart(data: Uint8Array): Uint8Array<ArrayBuffer> {
+  return new Uint8Array(data);
+}
+
 /** zlib.compress(data, level=9)-style: returns RFC 1950 stream. */
 export async function deflate(data: Uint8Array): Promise<Uint8Array> {
-  const stream = new Blob([data]).stream().pipeThrough(new CompressionStream("deflate"));
+  const stream = new Blob([toBlobPart(data)]).stream().pipeThrough(new CompressionStream("deflate"));
   const buffer = await new Response(stream).arrayBuffer();
   return new Uint8Array(buffer);
 }
 
 /** zlib.decompress(data)-style: inflates an RFC 1950 stream. */
 export async function inflate(data: Uint8Array): Promise<Uint8Array> {
-  const stream = new Blob([data]).stream().pipeThrough(new DecompressionStream("deflate"));
+  const stream = new Blob([toBlobPart(data)]).stream().pipeThrough(new DecompressionStream("deflate"));
   const buffer = await new Response(stream).arrayBuffer();
   return new Uint8Array(buffer);
 }

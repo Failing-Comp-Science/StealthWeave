@@ -46,6 +46,12 @@ test("no-compression encode -> decode round trip", async ({ page }) => {
   await page.getByTestId("button-technical-details").click();
   await expect(resultPanel).toContainText("Lossless");
   await expect(resultPanel).toContainText("DEFLATE (IF SMALLER)");
+  // PNG covers run entirely in-browser: the MODE row must report the client
+  // spatial engine and REMAINING must show leftover capacity on the preset.
+  const modeRow = resultPanel.locator(".tech-row").filter({ hasText: "MODE" });
+  await expect(modeRow).toHaveCount(1);
+  await expect(modeRow.first()).toContainText("SPATIAL / LSB (CLIENT, LOSSLESS)");
+  await expect(resultPanel.locator(".tech-row").filter({ hasText: "REMAINING" }).first()).toContainText("KB");
 
   // Download the stego file via the download button (avoids Vite proxy body issue)
   const downloadPromise = page.waitForEvent("download");
@@ -72,4 +78,6 @@ test("no-compression encode -> decode round trip", async ({ page }) => {
   // Expand technical details on decode page to see compression mode
   await page.getByTestId("button-technical-details").click();
   await expect(page.getByText("NO COMPRESSION").first()).toBeVisible();
+  const decodeModeRow = page.locator(".result-panel.complete .tech-row").filter({ hasText: "MODE" });
+  await expect(decodeModeRow.first()).toContainText("SPATIAL / LSB (CLIENT, LOSSLESS)");
 });

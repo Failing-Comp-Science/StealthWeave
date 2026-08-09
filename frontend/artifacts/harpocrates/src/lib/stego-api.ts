@@ -38,6 +38,9 @@ import {
   type PayloadType,
   type UnifiedPresetId,
 } from "@/lib/encode-decode-mock";
+import { buildContainer, embedImage, extractImage } from "@/lib/stego/index";
+import { CompressionPresetId, PayloadType as ContainerPayloadType } from "@/lib/stego/index";
+import { spatialContainerBudget } from "@/lib/stego/capacity";
 
 /** UI payload id -> server enum. */
 const UI_TO_API: Record<PayloadType, ApiPayloadType> = {
@@ -54,6 +57,12 @@ const API_TO_UI: Record<ApiPayloadType, PayloadType> = {
 };
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/** PNG/BMP image covers ride the client-side spatial-LSB pipeline (Phase 3). */
+function isSpatialCover(drop: DropFile): boolean {
+  const format = (drop.format ?? "").toLowerCase();
+  return drop.kind === "image" && (format === "png" || format === "bmp");
+}
 
 /** Error the pages can surface via Toast/Alert (carries server 400 detail). */
 export class StegoApiError extends Error {
@@ -136,6 +145,12 @@ export async function runEmbed(
     formData.append(payloadType === "image" ? "payload_image" : "payload_file", payloadData.file);
   }
 
+  // PNG/BMP covers are embedded entirely in the browser (spatial LSB, same
+  // wire format the backend uses) — no upload/encode round trip.
+  if (isSpatialCover(cover)) {
+    return runClientEmbed(input, onProgress, signal);
+  }
+
   onProgress({ stage: "calculating", percent: 30, detail: "CALCULATING CAPACITY & PRESET" });
   await sleep(250);
 
@@ -164,6 +179,91 @@ export async function runEmbed(
     // exact outcome is read back from the container flag at decode time.
     compressed: true,
   };
+}
+
+/**
+ * Client-side PNG/BMP embed (Phase 3): builds the HSTG v2 container in the
+ * browser (LOSSLESS config: LSB depth 1, RS-ECC, AES-GCM when a password is
+ * set, DEFLATE-if-smaller), verifies the exact spatial fit, then runs the
+ * decode -> LSB -> encode-PNG pipeline off the main thread. No network.
+ */
+async function runClientEmbed(
+  input: EncodeInput,
+  onProgress: (progress: EmbedProgress) => void,
+  signal?: AbortSignal,
+): Promise<EncodeResult> {
+  const { cover, payloadType, payloadData, password, preset } = input;
+  if (!cover.width || !cover.height) {
+    throw new StegoApiError(
+      "Could not read this cover's dimensions for a browser-side embed.",
+      undefined,
+      "COVER_DIMENSIONS_MISSING",
+    );
+  }
+
+  onProgress({ stage: "calculating", percent: 30, detail: "BUILDING HSTG CONTAINER" });
+  await sleep(150);
+
+  // LOSSLESS config (matches _resolve_effective_encode_params for preset=LOSSLESS):
+  // engine tier "light" -> CompressionPresetId.LIGHT; bpc = 1; DEFLATE-if-smaller.
+  const payloadBytes = new Uint8Array(
+    payloadType === "text"
+      ? new TextEncoder().encode(payloadData.text ?? "")
+      : await (payloadData.file as Blob).arrayBuffer(),
+  );
+  const originalFilename = payloadType === "text" ? "" : payloadData.file?.name ?? "";
+  const mimeType = payloadType === "text" ? "" : payloadData.file?.type ?? "";
+
+  const container = await buildContainer(payloadBytes, containerPayloadType(payloadType), {
+    compressionPreset: CompressionPresetId.LIGHT,
+    password: password || undefined,
+    originalFilename,
+    mimeType,
+    compress: true,
+    useEcc: true,
+  });
+
+  // Exact fit check mirrors _encode_lsb's spatial_container_budget (bpc=1).
+  const budget = spatialContainerBudget(cover.height, cover.width);
+  if (container.length > budget) {
+    throw new StegoApiError(
+      `Payload does not fit this cover: container is ${container.length} B, the lossless spatial budget is ${budget} B. Use a larger cover or a smaller/compressed payload.`,
+      undefined,
+      "IMAGE_CAPACITY_EXCEEDED",
+    );
+  }
+
+  onProgress({ stage: "embedding", percent: 55, detail: "EMBEDDING INTO CARRIER" });
+  const res = await embedImage(
+    { cover: cover.file, container, password, bpc: 1 },
+  );
+  signal?.throwIfAborted();
+  onProgress({ stage: "embedding", percent: 100, detail: "EMBEDDED — READY" });
+
+  const base = cover.file.name.replace(/\.[^.]+$/, "") || "cover";
+  return {
+    fileName: `${base}-harpocrates.png`,
+    algorithm: "image_lsb",
+    psnr: null, // LSB is lossless: PSNR -> infinity; the backend reports "inf".
+    ssim: null,
+    ber: 0,
+    encrypted: password.length > 0,
+    preset,
+    containerBytes: res.containerBytes,
+    stegoBlob: res.png,
+    compressed: true,
+  };
+}
+
+function containerPayloadType(type: PayloadType): number {
+  switch (type) {
+    case "text":
+      return ContainerPayloadType.TEXT_MESSAGE;
+    case "text-file":
+      return ContainerPayloadType.TEXT_FILE;
+    case "image":
+      return ContainerPayloadType.IMAGE;
+  }
 }
 
 /**
@@ -243,6 +343,11 @@ export async function runExtract(
   onProgress({ stage: "uploading", percent: 10, detail: "UPLOADING CARRIER" });
   await sleep(250);
 
+  // PNG/BMP stego files are extracted entirely in the browser (spatial LSB).
+  if (isSpatialCover(stego)) {
+    return runClientExtract(stego, password, onProgress);
+  }
+
   let res: DecodeResponse;
   try {
     onProgress({ stage: "reading", percent: 30, detail: "READING HSTG CONTAINER" });
@@ -293,4 +398,68 @@ export async function runExtract(
     magic,
     compressed,
   };
+}
+
+/**
+ * Client-side PNG/BMP extract (Phase 3): LSB extract + parseContainer in the
+ * browser, mirroring the backend decode response. No network.
+ */
+async function runClientExtract(
+  stego: DropFile,
+  password: string,
+  onProgress: (progress: ExtractProgress) => void,
+): Promise<ExtractApiResult> {
+  onProgress({ stage: "reading", percent: 30, detail: "READING HSTG CONTAINER" });
+  await sleep(150);
+  try {
+    const res = await extractImage(stego.file, password);
+    onProgress({ stage: "extracting", percent: 90, detail: "RECOVERING PAYLOAD" });
+    await sleep(150);
+    const type = containerPayloadTypeToUi(res.header.payloadType);
+    const encrypted = password.length > 0;
+    const magic = "HSTG / V2 / SHA-256 + RS ECC";
+    const compressed = res.header.compressed;
+    const base = stego.file.name.replace(/\.[^.]+$/, "") || "payload";
+
+    if (type === "text") {
+      const textContent = new TextDecoder("utf-8", { fatal: false }).decode(res.payload);
+      return {
+        type,
+        textContent,
+        fileName: `${base}-recovered.txt`,
+        fileSize: res.payload.length,
+        algorithm: "image_lsb",
+        encrypted,
+        magic,
+        compressed,
+      };
+    }
+
+    const mime = res.header.mimeType || "";
+    const fileBlob = new Blob([res.payload as BlobPart], {
+      type: mime || "application/octet-stream",
+    });
+    const fallbackExt = type === "image" ? ".png" : ".txt";
+    return {
+      type,
+      fileName: res.header.originalFilename || `${base}-recovered${extensionFor(mime, fallbackExt)}`,
+      fileSize: res.payload.length,
+      fileBlob,
+      algorithm: "image_lsb",
+      encrypted,
+      magic,
+      compressed,
+    };
+  } catch (err) {
+    onProgress({ stage: "error", percent: 100, detail: "EXTRACTION FAILED" });
+    const message = err instanceof Error ? err.message : "Extraction failed";
+    const code = /password|key|decrypt/i.test(message) ? "wrong_password" : "DECODE_RECOVERY_FAILED";
+    throw new StegoApiError(message, undefined, code);
+  }
+}
+
+function containerPayloadTypeToUi(type: number): PayloadType {
+  if (type === ContainerPayloadType.IMAGE) return "image";
+  if (type === ContainerPayloadType.TEXT_FILE) return "text-file";
+  return "text";
 }

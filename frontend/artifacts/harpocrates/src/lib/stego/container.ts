@@ -182,7 +182,7 @@ export async function buildContainer(
   }
 
   // --- Reed-Solomon ECC over the (compressed) payload -------------------
-  let eccScheme = EccScheme.NONE;
+  let eccScheme: number = EccScheme.NONE;
   if (useEcc) {
     body = rsEncode(body);
     flags |= FLAG_ECC;

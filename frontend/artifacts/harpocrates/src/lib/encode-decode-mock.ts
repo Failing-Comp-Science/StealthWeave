@@ -136,3 +136,26 @@ export function getPayloadTypeIcon(type: PayloadType) {
       return "FileImage";
   }
 }
+
+/**
+ * Classify an embed/extract algorithm id into a user-facing MODE label.
+ * Distinguishes the lossless client-side spatial engine (image_lsb) from the
+ * transform-domain server engine (image_dct_qim / video_dct_qim).
+ */
+export function getEngineModeLabel(algorithm: string): string {
+  switch (algorithm) {
+    case "image_lsb":
+      return "SPATIAL / LSB (CLIENT, LOSSLESS)";
+    case "image_dct_qim":
+      return "TRANSFORM / DCT-QIM (SERVER)";
+    case "video_dct_qim":
+      return "TRANSFORM / DCT-QIM (SERVER)";
+    default:
+      return algorithm.toUpperCase() || "UNKNOWN";
+  }
+}
+
+/** Bytes of payload capacity still unused on the carrier's strongest preset. */
+export function remainingCapacityBytes(maxBytes: number, payloadSize: number): number {
+  return Math.max(0, maxBytes - payloadSize);
+}

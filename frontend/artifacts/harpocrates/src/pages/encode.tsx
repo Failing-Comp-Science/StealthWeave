@@ -11,7 +11,7 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { toast } from "@/hooks/use-toast";
 import { formatBytes, formatDuration } from "@/lib/format";
-import { DEFAULT_UNIFIED_PRESET, getUnifiedPresetLabel, getPayloadTypeLabel, UNIFIED_PRESETS, unifiedPresetToTierId } from "@/lib/encode-decode-mock";
+import { DEFAULT_UNIFIED_PRESET, getEngineModeLabel, getUnifiedPresetLabel, getPayloadTypeLabel, remainingCapacityBytes, UNIFIED_PRESETS, unifiedPresetToTierId } from "@/lib/encode-decode-mock";
 import type { CompressionPreset, EmbedProgress, EmbedResult, PayloadType, UnifiedPresetId } from "@/lib/encode-decode-mock";
 import { analyzeCover, CapacityError, CapacityTimeoutError, payloadTypesFor } from "@/lib/capacity-api";
 import { runEmbed, StegoApiError, type EncodeResult as StegoEncodeResult } from "@/lib/stego-api";
@@ -397,6 +397,7 @@ export default function EncodePage() {
               result={result}
               payloadType={payloadType}
               payloadSize={payloadSize}
+              maxBytes={maxBytes}
               preset={DEFAULT_UNIFIED_PRESET}
               onDownload={downloadStego}
             />
@@ -410,18 +411,20 @@ export default function EncodePage() {
 }
 
 function EncodeResult({
-  cover, result, payloadType, payloadSize, preset, onDownload,
+  cover, result, payloadType, payloadSize, maxBytes, preset, onDownload,
 }: {
   cover: DropFile;
   result: EmbedResult;
   payloadType: PayloadType | null;
   payloadSize: number;
+  maxBytes: number;
   preset: UnifiedPresetId;
   onDownload: () => void;
 }) {
   const presetDef = UNIFIED_PRESETS.find((p) => p.id === result.preset) ?? UNIFIED_PRESETS.find((p) => p.id === preset);
   const presetLabel = presetDef?.label ?? getUnifiedPresetLabel(preset);
   const policyLabel = presetDef?.compressionPolicyLabel ?? "DEFLATE (IF SMALLER)";
+  const remaining = remainingCapacityBytes(maxBytes, payloadSize);
   return (
     <div className="success-result">
       <div className="success-mark"><Check size={18} /></div>
@@ -446,6 +449,9 @@ function EncodeResult({
         rows={[
           { label: "PRESET", value: presetLabel },
           { label: "COMPRESSION", value: policyLabel },
+          { label: "MODE", value: getEngineModeLabel(result.algorithm) },
+          { label: "ALGORITHM", value: result.algorithm },
+          { label: "REMAINING", value: maxBytes > 0 ? formatBytes(remaining) : "N/A" },
           { label: "CONTAINER SIZE", value: result.containerBytes != null ? formatBytes(result.containerBytes) : "N/A" },
           { label: "ALGORITHM", value: result.algorithm },
           { label: "PSNR", value: result.psnr != null ? `${result.psnr.toFixed(2)} dB` : "N/A" },
@@ -454,7 +460,7 @@ function EncodeResult({
           { label: "ENCRYPTION", value: result.encrypted ? "AES-256-GCM" : "NONE" },
           { label: "FRAMING", value: "HSTG / V2 / SHA-256 + RS ECC" },
         ]}
-        note="The preset resolves the full engine configuration server-side (QF/CRF, QIM delta, LSB depth, container tier); DEFLATE is applied inside the container only when it actually shrinks the payload, and the decode panel reads the outcome from the container's flag bit. Container size comes from the X-Stego-Container-Bytes header; PSNR / SSIM / BER are measured per-encode by the server (X-Stego-* headers)."
+        note="MODE distinguishes the lossless client-side spatial engine (image_lsb, PNG/BMP, runs in-browser) from the transform-domain server engine (image_dct_qim / video_dct_qim, JPEG/video). REMAINING is the unused payload capacity on the strongest preset after this embed. The preset resolves the full engine configuration server-side (QF/CRF, QIM delta, LSB depth, container tier); DEFLATE is applied inside the container only when it actually shrinks the payload, and the decode panel reads the outcome from the container's flag bit. Container size comes from the X-Stego-Container-Bytes header; PSNR / SSIM / BER are measured per-encode by the server (X-Stego-* headers)."
       />
     </div>
   );

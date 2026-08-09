@@ -10,7 +10,7 @@ import { Progress } from "@/components/ui/progress";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { toast } from "@/hooks/use-toast";
 import { formatBytes } from "@/lib/format";
-import { getPayloadTypeLabel } from "@/lib/encode-decode-mock";
+import { getEngineModeLabel, getPayloadTypeLabel } from "@/lib/encode-decode-mock";
 import type { ExtractProgress, ExtractResult } from "@/lib/encode-decode-mock";
 import { runExtract, StegoApiError } from "@/lib/stego-api";
 
@@ -261,13 +261,14 @@ function DecodeResult({
       <TechnicalDetails
         rows={[
           { label: "PAYLOAD TYPE", value: getPayloadTypeLabel(result.type) },
+          { label: "MODE", value: getEngineModeLabel(result.algorithm) },
           { label: "ALGORITHM", value: result.algorithm },
           { label: "MAGIC", value: result.magic },
           { label: "COMPRESSION", value: result.compressed ? "DEFLATE / RFC 1951" : "NO COMPRESSION" },
           { label: "ENCRYPTION", value: result.encrypted ? "AES-256-GCM" : "NONE" },
           { label: "KDF", value: result.encrypted ? "PBKDF2 / SHA-256 / 100k" : "N/A" },
         ]}
-        note="Compression mode is read from the container's FLAG_COMPRESSED header bit after extraction. The header stores only this boolean today, so the exact Chat preset (standard vs HD) can't be recovered on decode — future space for a container-preset field."
+        note="MODE distinguishes the lossless client-side spatial engine (image_lsb) from the transform-domain server engine (image_dct_qim / video_dct_qim). PNG/BMP carriers are decoded entirely in the browser; JPEG/video carriers require the server. Compression mode is read from the container's FLAG_COMPRESSED header bit after extraction. The header stores only this boolean today, so the exact Chat preset (standard vs HD) can't be recovered on decode — future space for a container-preset field."
       />
     </div>
   );

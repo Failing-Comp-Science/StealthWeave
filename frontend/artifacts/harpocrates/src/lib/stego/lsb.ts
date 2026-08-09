@@ -32,6 +32,7 @@ import {
   packPayloadHeaderV1,
   unpackPayloadHeaderV1,
   FLAG_ENCRYPTED,
+  PAYLOAD_HEADER_SIZE,
 } from "./crypto";
 
 /** Number of RGB channels used per pixel (alpha untouched). */
@@ -109,9 +110,13 @@ export async function extractContainerLsb(
 ): Promise<Uint8Array> {
   for (let bpc = 1; bpc <= 3; bpc++) {
     try {
-      const headerBytes = extractBits(rgb, 14, bpc);
+      const headerBytes = extractBits(rgb, PAYLOAD_HEADER_SIZE, bpc);
       const header = unpackPayloadHeaderV1(headerBytes);
-      const encrypted = extractBits(rgb, header.length, bpc);
+      // Read header + encrypted payload from the start (matches the backend's
+      // _extract_sequential, which reads total_len bytes and slices below),
+      // then take the bytes past the 14-byte header.
+      const full = extractBits(rgb, PAYLOAD_HEADER_SIZE + header.length, bpc);
+      const encrypted = full.slice(PAYLOAD_HEADER_SIZE);
       if (encrypted.length !== header.length) continue;
       const container = await decryptPayload(encrypted, password);
       if (crc32(container) === header.crc32) return container;
