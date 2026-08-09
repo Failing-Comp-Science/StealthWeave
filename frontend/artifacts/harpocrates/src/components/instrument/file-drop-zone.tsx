@@ -2,6 +2,7 @@ import { useRef, useState, type ChangeEvent, type DragEvent, type ReactNode, typ
 import { Check, FileImage, FileText, Film, Upload, X } from "lucide-react";
 import { formatBytes, formatDuration } from "@/lib/format";
 import { classifyFile, type Modality } from "@/lib/file-classify";
+import { sniffImageDimensions } from "@/lib/image-dimensions";
 
 export type DropFileKind = Modality;
 
@@ -35,16 +36,16 @@ const KIND_ICON: Record<DropFileKind, ReactNode> = {
   text: <FileText size={16} />,
 };
 
-function buildDropFile(file: File, kind: DropFileKind, format?: string): Promise<DropFile> {
+async function buildDropFile(file: File, kind: DropFileKind, format?: string): Promise<DropFile> {
   const url = URL.createObjectURL(file);
   const base: DropFile = { file, url, kind, format };
   if (kind === "image") {
-    return new Promise((resolve) => {
-      const image = new Image();
-      image.onload = () => resolve({ ...base, width: image.naturalWidth, height: image.naturalHeight });
-      image.onerror = () => resolve(base);
-      image.src = url;
-    });
+    // Phase 1: sniff dimensions from the header bytes (instant) instead of a
+    // full ``new Image()`` pixel decode. Returns null dims for exotic formats
+    // — the preview still works, only the dimension readout is omitted.
+    const head = new Uint8Array(await file.slice(0, 512).arrayBuffer().catch(() => new ArrayBuffer(0)));
+    const dims = sniffImageDimensions(format ?? "", head);
+    return dims ? { ...base, ...dims } : base;
   }
   if (kind === "video") {
     return new Promise((resolve) => {

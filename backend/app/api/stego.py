@@ -147,11 +147,11 @@ def _annotate_unified(row: dict) -> dict:
     """Attach the unified preset id/label to a capacity-model row.
 
     Engine-tier rows (light/standard/heavy) map 1:1 onto the unified ids; the
-    lossless spatial row (PNG/BMP covers) is the LOCAL_HIGH_CAPACITY preset.
+    lossless spatial row (PNG/BMP covers) is the LOSSLESS preset.
     """
     tier = row.get("id")
     if tier == "lossless_high_capacity":
-        pid = UnifiedPresetId.LOCAL_HIGH_CAPACITY
+        pid = UnifiedPresetId.LOSSLESS
     else:
         try:
             pid = legacy_engine_tier_to_unified(tier)
@@ -169,21 +169,31 @@ def _container_preset_from_unified(pid: UnifiedPresetId) -> ContainerCompression
     return unified_to_container_preset(pid)
 
 
+def _is_lossless_alias(token: str) -> bool:
+    """True for the pre-rename ids that map onto the LOSSLESS preset.
+
+    ``LOCAL_HIGH_CAPACITY`` (pre-rename canonical id) and the Stage-2
+    ``LOSSLESS_HIGH_CAPACITY`` resolve onto the unified LOSSLESS axis so old
+    clients keep working; both echo ``LOSSLESS`` in the API.
+    """
+    return (token or "").strip().upper() in {"LOCAL_HIGH_CAPACITY", "LOSSLESS_HIGH_CAPACITY"}
+
+
 def _resolve_requested_capacity_preset(
     preset: str, compression_preset: CompressionPreset
 ) -> tuple[Optional[UnifiedPresetId], ContainerCompressionPreset]:
     """Resolve the capacity endpoint's preset axis.
 
     The unified ``preset`` query param is the first-class axis (default
-    LOCAL_HIGH_CAPACITY). A legacy ``compression_preset`` explicitly sent by
+    LOSSLESS). A legacy ``compression_preset`` explicitly sent by
     old clients (anything other than the NO_COMPRESSION default) wins over it
     so legacy callers keep their compression semantics; NO_COMPRESSION maps to
-    the same factor (1.0) as LOCAL_HIGH_CAPACITY, so there is no conflict.
+    the same factor (1.0) as LOSSLESS, so there is no conflict.
     Returns ``(unified_id_or_None, container_preset)``.
     """
     if compression_preset != CompressionPreset.NO_COMPRESSION:
         return None, _resolve_container_preset(compression_preset, compress=False)
-    if is_unified_preset_token(preset):
+    if is_unified_preset_token(preset) or _is_lossless_alias(preset):
         pid = get_unified_preset(preset).id
         return pid, _container_preset_from_unified(pid)
     return None, _resolve_container_preset(compression_preset, compress=False)
@@ -413,8 +423,8 @@ def _decode_response(header: ContainerHeaderV2, payload: bytes) -> DecodeRespons
 async def stego_capacity(
     payload_type: str = Query(..., description="TEXT_MESSAGE | TEXT_FILE | IMAGE"),
     preset: str = Query(
-        "LOCAL_HIGH_CAPACITY",
-        description="Unified carrier preset (LOCAL_HIGH_CAPACITY | CHAT_STANDARD | CHAT_HD)",
+        "LOSSLESS",
+        description="Unified carrier preset (LOSSLESS | CHAT_STANDARD | CHAT_HD)",
     ),
     compression_preset: CompressionPreset = Query(
         CompressionPreset.NO_COMPRESSION,
@@ -618,7 +628,7 @@ def _resolve_effective_encode_params(
     """Resolve the single preset axis for an encode request.
 
     Precedence (locked by tests):
-      1. explicit unified ``preset`` id (LOCAL_HIGH_CAPACITY | CHAT_STANDARD |
+      1. explicit unified ``preset`` id (LOSSLESS | CHAT_STANDARD |
          CHAT_HD) -> complete resolved configuration;
       2. legacy ``carrier_preset`` (chat_standard | chat_hd |
          lossless_high_capacity) when it is an explicit non-default choice;
@@ -629,7 +639,7 @@ def _resolve_effective_encode_params(
     """
     is_image = cover_type == CoverType.IMAGE
 
-    if is_unified_preset_token(preset_token):
+    if is_unified_preset_token(preset_token) or _is_lossless_alias(preset_token):
         cfg = resolve_unified_preset(
             preset_token, "image" if is_image else "video",
             carrier_format, payload_type.value,
@@ -834,8 +844,8 @@ async def stego_encode(
     # tokens (light | standard | heavy, or a bare QF / CRF) are still accepted
     # in this field for old clients.
     preset: str = Form(
-        "LOCAL_HIGH_CAPACITY",
-        description="Unified preset: LOCAL_HIGH_CAPACITY | CHAT_STANDARD | CHAT_HD (legacy: light | standard | heavy)",
+        "LOSSLESS",
+        description="Unified preset: LOSSLESS | CHAT_STANDARD | CHAT_HD (legacy: light | standard | heavy)",
     ),
     # LEGACY: kept for backward compatibility (see _resolve_effective_encode_params)
     carrier_preset: CarrierPreset = Form(
@@ -1089,8 +1099,8 @@ async def stego_image_encode(
     payload_type: str = Form("TEXT_MESSAGE", description="TEXT_MESSAGE | TEXT_FILE"),
     # PRIMARY: the single user-facing preset axis (unified presets).
     preset: str = Form(
-        "LOCAL_HIGH_CAPACITY",
-        description="Unified preset: LOCAL_HIGH_CAPACITY | CHAT_STANDARD | CHAT_HD (legacy: light | standard | heavy)",
+        "LOSSLESS",
+        description="Unified preset: LOSSLESS | CHAT_STANDARD | CHAT_HD (legacy: light | standard | heavy)",
     ),
     # LEGACY: kept for backward compatibility (see _resolve_effective_encode_params)
     carrier_preset: CarrierPreset = Form(
@@ -1231,8 +1241,8 @@ async def stego_video_encode(
     payload_type: str = Form("TEXT_MESSAGE", description="TEXT_MESSAGE | TEXT_FILE | IMAGE"),
     # PRIMARY: the single user-facing preset axis (unified presets).
     preset: str = Form(
-        "LOCAL_HIGH_CAPACITY",
-        description="Unified preset: LOCAL_HIGH_CAPACITY | CHAT_STANDARD | CHAT_HD (legacy: light | standard | heavy)",
+        "LOSSLESS",
+        description="Unified preset: LOSSLESS | CHAT_STANDARD | CHAT_HD (legacy: light | standard | heavy)",
     ),
     # LEGACY: kept for backward compatibility (see _resolve_effective_encode_params)
     carrier_preset: CarrierPreset = Form(

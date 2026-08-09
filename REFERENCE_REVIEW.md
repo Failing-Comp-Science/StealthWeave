@@ -1,7 +1,7 @@
 # Harpocrates — Reference Implementation Review (2026-08-09)
 
 > Companion to `codebase_and_repo_audit.md` (licenses & salvage map) and
-> `docs/HOW_IT_WORKS.md` (our own architecture). This file records the
+> `HOW_IT_WORKS.md` (our own architecture). This file records the
 > *behavioral* deep-dive of the reference and competitor implementations
 > studied on 2026-08-09: what they actually detect, embed, frame, and fail on —
 > and which of their behaviors we should copy, adapt, or deliberately avoid.
@@ -97,7 +97,7 @@ The only clean takeaways:
 
 1. **Magic-byte probing should be a first-class `carrier_detect` step**, before the
    capacity/encode path (AlphaStag does it; javid ships no detector and its docs warn users
-   "always include extension"). → aligns with `docs/CARRIER_PRESETS.md`.
+   "always include extension"). → aligns with `CARRIER_PRESETS.md`.
 2. **License quarantine remains**: reuse patterns only from MIT (`javid-steganography`); reimplement
    Alpha magic detection table from scratch and reference BUM16 framing only conceptually.
 3. **Missing in our stack vs. BUM16-style frames:** none (we already carry CRC32+size+password header).

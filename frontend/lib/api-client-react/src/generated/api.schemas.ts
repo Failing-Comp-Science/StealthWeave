@@ -31,7 +31,7 @@ export type Preset = typeof Preset[keyof typeof Preset];
 
 
 export const Preset = {
-  LOCAL_HIGH_CAPACITY: 'LOCAL_HIGH_CAPACITY',
+  LOSSLESS: 'LOSSLESS',
   CHAT_STANDARD: 'CHAT_STANDARD',
   CHAT_HD: 'CHAT_HD',
 } as const;
@@ -61,7 +61,7 @@ export interface PresetCapacity {
   technique: string;
   expected_ber: number;
   survivability_description: string;
-  /** Unified user-facing preset id of this row (LOCAL_HIGH_CAPACITY | CHAT_STANDARD | CHAT_HD) */
+  /** Unified user-facing preset id of this row (LOSSLESS | CHAT_STANDARD | CHAT_HD) */
   preset_id?: string | null;
   /** Human-readable label of the unified preset */
   preset_label?: string | null;
@@ -97,7 +97,7 @@ export type StegoCapacityParams = {
  */
 payload_type: PayloadType;
 /**
- * Unified user-facing preset (LOCAL_HIGH_CAPACITY | CHAT_STANDARD | CHAT_HD). An explicitly sent legacy `compression_preset` wins over it for old clients. Default: LOCAL_HIGH_CAPACITY.
+ * Unified user-facing preset (LOSSLESS | CHAT_STANDARD | CHAT_HD). An explicitly sent legacy `compression_preset` wins over it for old clients. Legacy tokens (LOCAL_HIGH_CAPACITY, light/standard/heavy, bare QF/CRF) are still accepted and resolve onto the unified axis. Default: LOSSLESS.
  */
 preset?: Preset;
 /**
@@ -150,7 +150,7 @@ export type StegoImageEncodeBody = {
   /** Cover image (PNG/BMP/JPEG) */
   cover?: Blob;
   payload_type?: string;
-  /** Unified preset (LOCAL_HIGH_CAPACITY | CHAT_STANDARD | CHAT_HD); legacy tokens (light | standard | heavy, bare QF) still accepted */
+  /** Unified preset (LOSSLESS | CHAT_STANDARD | CHAT_HD); legacy tokens (LOCAL_HIGH_CAPACITY, light | standard | heavy, bare QF) still accepted */
   preset?: string;
   password?: string;
   /** LEGACY: Apply DEFLATE */
@@ -219,7 +219,7 @@ export type StegoVideoEncodeBody = {
   /** Cover video */
   cover?: Blob;
   payload_type?: StegoVideoEncodeBodyPayloadType;
-  /** Unified preset (LOCAL_HIGH_CAPACITY | CHAT_STANDARD | CHAT_HD); legacy tokens (light | standard | heavy, bare CRF) still accepted */
+  /** Unified preset (LOSSLESS | CHAT_STANDARD | CHAT_HD); legacy tokens (LOCAL_HIGH_CAPACITY, light | standard | heavy, bare CRF) still accepted */
   preset?: string;
   password?: string;
   /** LEGACY: Apply DEFLATE */

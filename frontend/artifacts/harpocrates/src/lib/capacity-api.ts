@@ -8,12 +8,21 @@
  * `ApiError` (whose message carries the server's `detail`), and the generated
  * enum/response types.
  *
- * The endpoint returns capacity for EVERY engine preset in one call and
- * enforces the cover/payload matrix server-side. The single user-facing
- * ``preset`` axis (LOCAL_HIGH_CAPACITY | CHAT_STANDARD | CHAT_HD) is forwarded
- * as a query param so the returned caps reflect the preset-aware capacity
- * model (CHAT_* presets scale TEXT_FILE capacity by the ~1.35x DEFLATE factor;
- * LOCAL models it conservatively at 1.0).
+ * Phase 1 (fast cover detection):
+ * - Payload-type options are derived CLIENT-SIDE from the cover modality
+ *   (image -> [text, text-file]; video -> [text, text-file, image]) so step 02
+ *   renders immediately — no payload-analyzing network gate.
+ * - PNG/BMP capacity is computed CLIENT-SIDE (instant, exact spatial-LSB model
+ *   from `stego/capacity.ts`); no network round trip.
+ * - JPEG/video capacity still hits the server, but results are CACHED keyed by
+ *   `kind|format|size|header16hash`, requests are ABORTABLE, and video probes
+ *   get a 10s client-side timeout (`CapacityTimeoutError`).
+ *
+ * The single user-facing ``preset`` axis (LOSSLESS | CHAT_STANDARD | CHAT_HD)
+ * is forwarded as a query param so the returned caps reflect the preset-aware
+ * capacity model (CHAT_* presets scale TEXT_FILE capacity by the ~1.35x
+ * DEFLATE factor; LOSSLESS models it conservatively at 1.0).
+ *
  * This adapter maps the backend shape onto the UI's existing
  * `CompressionPreset` shape (so the Encode page's preset picker and live
  * capacity check keep working unchanged), converting the server enum
@@ -30,6 +39,7 @@ import {
 } from "@workspace/api-client-react";
 import type { DropFile } from "@/components/instrument/file-drop-zone";
 import type { CompressionPreset, PayloadType, UnifiedPresetId } from "@/lib/encode-decode-mock";
+import { computeSpatialCapacity, type SpatialCapacityRow } from "@/lib/stego/capacity";
 
 /** Error the pages can surface via Toast/Alert (carries server 400 detail). */
 export class CapacityError extends Error {
@@ -38,6 +48,14 @@ export class CapacityError extends Error {
     super(message);
     this.name = "CapacityError";
     this.status = status;
+  }
+}
+
+/** Raised when a video capacity probe exceeds the client-side timeout. */
+export class CapacityTimeoutError extends CapacityError {
+  constructor() {
+    super("Capacity check timed out — you can still try to encode (the server re-verifies fit).");
+    this.name = "CapacityTimeoutError";
   }
 }
 
@@ -57,6 +75,17 @@ const API_TO_UI: Record<ApiPayloadType, PayloadType> = {
 
 function nn(value: number | null | undefined): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+/** Payload types a cover of this modality supports (client-side, Phase 1). */
+export function payloadTypesFor(kind: string): PayloadType[] {
+  return kind === "video" ? ["text", "text-file", "image"] : ["text", "text-file"];
+}
+
+/** PNG/BMP covers ride the instant, client-side spatial-LSB model. */
+function isSpatialCover(drop: DropFile): boolean {
+  const format = (drop.format ?? "").toLowerCase();
+  return (format === "png" || format === "bmp") && typeof drop.width === "number" && typeof drop.height === "number";
 }
 
 /**
@@ -97,19 +126,36 @@ function toUiPreset(
   };
 }
 
+/** Convert the client-side spatial model row into the UI preset shape. */
+function toUiSpatialPreset(row: SpatialCapacityRow): CompressionPreset {
+  return {
+    id: row.id,
+    name: row.name,
+    description: row.description,
+    maxBytesForPayload: {
+      text: row.max_bytes_text_message,
+      "text-file": row.max_bytes_text_file,
+      image: 0,
+    },
+    expectedBer: row.expected_ber,
+    survivabilityDescription: row.survivability_description,
+  };
+}
+
 async function callCapacity(
   drop: DropFile,
   payloadType: PayloadType,
-  preset: UnifiedPresetId,
+  signal?: AbortSignal,
 ): Promise<CapacityResponse> {
   try {
     const params = {
       payload_type: UI_TO_API[payloadType],
-      preset,
+      preset: "LOSSLESS" as UnifiedPresetId,
     };
     return await stegoCapacity(
       { cover: drop.file },
       params,
+      signal ? { signal } : undefined,
     );
   } catch (err) {
     if (err instanceof ApiError) {
@@ -125,26 +171,115 @@ async function callCapacity(
   }
 }
 
+/** Stable cache key for a cover: modality|format|size|sha256(first 16 bytes). */
+async function coverCacheKey(drop: DropFile): Promise<string> {
+  let hash = "noheader";
+  try {
+    const head = new Uint8Array(await drop.file.slice(0, 16).arrayBuffer());
+    const digest = await crypto.subtle.digest("SHA-256", head);
+    hash = Array.from(new Uint8Array(digest))
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+  } catch {
+    // keep the "noheader" fallback — the rest of the key still disambiguates.
+  }
+  return `${drop.kind}|${drop.format ?? ""}|${drop.file.size}|${hash}`;
+}
+
+const cache = new Map<string, Promise<CoverAnalysis>>();
+
 export interface CoverAnalysis {
   cover: DropFile;
   presets: CompressionPreset[];
   payloadTypes: PayloadType[];
 }
 
+/** Fetch + adapt a server capacity response for a cover. */
+async function fetchAnalysis(
+  drop: DropFile,
+  payloadType: PayloadType,
+  signal?: AbortSignal,
+): Promise<CoverAnalysis> {
+  const coverKind: "image" | "video" = drop.kind === "video" ? "video" : "image";
+  const res = await callCapacity(drop, payloadType, signal);
+  const durationSec = drop.durationSec ?? 0;
+  const presets = res.presets.map((p) => toUiPreset(p, coverKind, durationSec));
+  return { cover: drop, presets, payloadTypes: payloadTypesFor(coverKind) };
+}
+
+/** Instant client-side spatial capacity for PNG/BMP covers. */
+function spatialAnalysis(drop: DropFile): CoverAnalysis {
+  const presets = [toUiSpatialPreset(computeSpatialCapacity(drop.height!, drop.width!))];
+  return { cover: drop, presets, payloadTypes: payloadTypesFor("image") };
+}
+
+const VIDEO_TIMEOUT_MS = 10_000;
+
+/** Abort ``target`` when any of ``signals`` aborts (one-time listeners). */
+function linkAbort(target: AbortController, signals: (AbortSignal | undefined)[]) {
+  const onAbort = () => target.abort();
+  for (const s of signals) s?.addEventListener("abort", onAbort, { once: true });
+}
+
 /**
- * Drop-in replacement for `mockAnalyzeCover`: one request returns every preset
- * plus the allowed payload types for the detected cover type. `preset` is the
- * single user-facing preset axis echoed to the backend (its TEXT_FILE factor
- * shapes the returned caps).
+ * Server capacity probe for JPEG/video covers. Video gets a 10s client-side
+ * timeout (the server full-decodes the clip to count I-frames): on timeout the
+ * fetch is aborted and ``CapacityTimeoutError`` is raised so the page can keep
+ * Encode enabled and let the server re-verify fit at encode time.
+ */
+async function networkAnalysis(
+  drop: DropFile,
+  opts?: { signal?: AbortSignal },
+): Promise<CoverAnalysis> {
+  if (drop.kind !== "video") {
+    return fetchAnalysis(drop, "text", opts?.signal);
+  }
+  const timeout = new AbortController();
+  const timer = setTimeout(() => timeout.abort(), VIDEO_TIMEOUT_MS);
+  const combined = new AbortController();
+  linkAbort(combined, [opts?.signal, timeout.signal]);
+  try {
+    return await fetchAnalysis(drop, "text", combined.signal);
+  } catch (err) {
+    if (timeout.signal.aborted) throw new CapacityTimeoutError();
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Analyze a cover: payload options (client-side) + capacity.
+ *
+ * PNG/BMP -> instant client-side model, no network. JPEG/video -> one cached
+ * server call (abortable via ``opts.signal``); video probes get a 10s
+ * client-side timeout surfaced as ``CapacityTimeoutError``. Successful results
+ * are cached keyed by ``kind|format|size|header16hash``; timeouts are not.
  */
 export async function analyzeCover(
   drop: DropFile,
-  preset: UnifiedPresetId = "LOCAL_HIGH_CAPACITY",
+  opts?: { signal?: AbortSignal },
 ): Promise<CoverAnalysis> {
-  const coverKind: "image" | "video" = drop.kind === "video" ? "video" : "image";
-  const res = await callCapacity(drop, "text", preset);
-  const durationSec = drop.durationSec ?? 0;
-  const presets = res.presets.map((p) => toUiPreset(p, coverKind, durationSec));
-  const payloadTypes = res.allowed_payload_types.map((t) => API_TO_UI[t]);
-  return { cover: drop, presets, payloadTypes };
+  if (isSpatialCover(drop)) {
+    return spatialAnalysis(drop);
+  }
+
+  const key = await coverCacheKey(drop);
+  const cached = cache.get(key);
+  if (cached) return cached;
+
+  const promise = networkAnalysis(drop, opts);
+  cache.set(
+    key,
+    promise.catch((err) => {
+      if (err instanceof CapacityTimeoutError) cache.delete(key);
+      throw err;
+    }),
+  );
+  return cache.get(key)!;
+}
+
+/** Drop the capacity cache (e.g. on unmount). */
+export function clearCapacityCache(): void {
+  cache.clear();
 }

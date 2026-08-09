@@ -10,13 +10,13 @@ every preset resolves to one complete configuration.
 
 Presets
 -------
-* LOCAL_HIGH_CAPACITY  — "Local / Pendrive — High Capacity". Pendrive/disk/LAN/
-  archive/direct file copy. No expected downstream lossy re-encode. Prefer
-  lossless carrier formats and capacity-oriented embedding. DEFLATE is applied
-  only when it actually shrinks the HSTG container (the production rule in
-  ``modules.container.build_container``); capacity is modeled conservatively at
-  ratio 1.0 and the EXACT serialized container size is measured at encode time.
-  Ordinary H.264 is NOT called mathematically lossless.
+* LOSSLESS              — "Lossless". Pendrive/disk/LAN/archive/direct file copy.
+  No expected downstream lossy re-encode. Prefer lossless carrier formats and
+  capacity-oriented embedding. DEFLATE is applied only when it actually shrinks
+  the HSTG container (the production rule in ``modules.container.build_container``);
+  capacity is modeled conservatively at ratio 1.0 and the EXACT serialized
+  container size is measured at encode time. Ordinary H.264 is NOT called
+  mathematically lossless.
 * CHAT_STANDARD       — "Chat Standard". Ordinary social/chat upload; conservative
   capacity; more robust carrier parameters; expects downstream recompression.
 * CHAT_HD             — "Chat HD". Higher-quality social/chat upload; intermediate
@@ -24,20 +24,22 @@ Presets
 
 Compatibility
 -------------
-Legacy engine presets light/standard/heavy (QF 95/85/75, CRF 18/23/28) and the
-Stage-2 carrier presets (chat_standard / chat_hd / lossless_high_capacity) map
-onto these three unified ids WITHOUT changing engine behavior:
+Legacy engine presets light/standard/heavy (QF 95/85/75, CRF 18/23/28), the
+Stage-2 carrier presets (chat_standard / chat_hd / lossless_high_capacity), and
+the pre-rename LOSSLESS id (LOCAL_HIGH_CAPACITY) map onto these three unified
+ids WITHOUT changing engine behavior:
 
-    light  (QF>=90 / CRF<=20)  -> LOCAL_HIGH_CAPACITY
+    light  (QF>=90 / CRF<=20)  -> LOSSLESS
     standard (QF 80-89 / CRF 21-25) -> CHAT_HD
     heavy  (QF<80 / CRF>25)    -> CHAT_STANDARD
-    lossless_high_capacity     -> LOCAL_HIGH_CAPACITY (alias)
+    lossless_high_capacity     -> LOSSLESS (alias)
+    LOCAL_HIGH_CAPACITY        -> LOSSLESS (alias)
     chat_standard              -> CHAT_STANDARD
     chat_hd                    -> CHAT_HD
 
 Precedence (locked by tests): 1. explicit unified ``preset`` id; 2. legacy
 mapping (carrier_preset / light-standard-heavy / compress / compression_preset);
-3. server default LOCAL_HIGH_CAPACITY.
+3. server default LOSSLESS.
 """
 from __future__ import annotations
 
@@ -53,19 +55,21 @@ CAPACITY_MODEL_VERSION = "2.0"
 
 class UnifiedPresetId(str, Enum):
     """Stable ids the frontend sends as the single ``preset`` field."""
-    LOCAL_HIGH_CAPACITY = "LOCAL_HIGH_CAPACITY"
+    LOSSLESS = "LOSSLESS"
     CHAT_STANDARD = "CHAT_STANDARD"
     CHAT_HD = "CHAT_HD"
 
 
 #: Legacy tokens that are accepted but always resolve through the legacy table.
 _LEGACY_ALIASES = {
+    # Pre-rename canonical id for the lossless preset.
+    "LOCAL_HIGH_CAPACITY": UnifiedPresetId.LOSSLESS,
     # Stage-2 carrier presets
     "CHAT_STANDARD": UnifiedPresetId.CHAT_STANDARD,
     "CHAT_HD": UnifiedPresetId.CHAT_HD,
-    "LOSSLESS_HIGH_CAPACITY": UnifiedPresetId.LOCAL_HIGH_CAPACITY,
+    "LOSSLESS_HIGH_CAPACITY": UnifiedPresetId.LOSSLESS,
     # legacy channel presets
-    "NO_COMPRESSION": UnifiedPresetId.LOCAL_HIGH_CAPACITY,
+    "NO_COMPRESSION": UnifiedPresetId.LOSSLESS,
 }
 
 
@@ -73,7 +77,7 @@ def _tier_for_image_qf(qf: int) -> UnifiedPresetId:
     """Map a legacy JPEG quality factor onto the unified preset (matches the
     API's ``_carrier_preset_for_qf`` boundaries: light>=90, standard>=80)."""
     if qf >= 90:
-        return UnifiedPresetId.LOCAL_HIGH_CAPACITY
+        return UnifiedPresetId.LOSSLESS
     if qf >= 80:
         return UnifiedPresetId.CHAT_HD
     return UnifiedPresetId.CHAT_STANDARD
@@ -82,7 +86,7 @@ def _tier_for_image_qf(qf: int) -> UnifiedPresetId:
 def _tier_for_video_crf(crf: int) -> UnifiedPresetId:
     """Map a legacy CRF onto the unified preset (light<=20, standard<=25)."""
     if crf <= 20:
-        return UnifiedPresetId.LOCAL_HIGH_CAPACITY
+        return UnifiedPresetId.LOSSLESS
     if crf <= 25:
         return UnifiedPresetId.CHAT_HD
     return UnifiedPresetId.CHAT_STANDARD
@@ -90,7 +94,7 @@ def _tier_for_video_crf(crf: int) -> UnifiedPresetId:
 
 #: Engine tier id the capacity calculators report for each unified preset.
 UNIFIED_TO_ENGINE_TIER: Dict[UnifiedPresetId, str] = {
-    UnifiedPresetId.LOCAL_HIGH_CAPACITY: "light",
+    UnifiedPresetId.LOSSLESS: "light",
     UnifiedPresetId.CHAT_HD: "standard",
     UnifiedPresetId.CHAT_STANDARD: "heavy",
 }
@@ -98,18 +102,18 @@ UNIFIED_TO_ENGINE_TIER: Dict[UnifiedPresetId, str] = {
 #: Legacy engine tier -> unified preset (reverse of the above).
 ENGINE_TIER_TO_UNIFIED = {tier: pid for pid, tier in UNIFIED_TO_ENGINE_TIER.items()}
 
-#: TEXT_FILE compression factor per unified preset: LOCAL is conservatively 1.0
+#: TEXT_FILE compression factor per unified preset: LOSSLESS is conservatively 1.0
 #: (measured from the ACTUAL serialized container at encode time), CHAT_* use
-#: the empirically measured median DEFLATE ratio (docs/COMPRESSION_PRESETS.md).
+#: the empirically measured median DEFLATE ratio (COMPRESSION_PRESETS.md).
 UNIFIED_TEXT_COMPRESSION_FACTOR: Dict[UnifiedPresetId, float] = {
-    UnifiedPresetId.LOCAL_HIGH_CAPACITY: 1.0,
+    UnifiedPresetId.LOSSLESS: 1.0,
     UnifiedPresetId.CHAT_STANDARD: 1.35,
     UnifiedPresetId.CHAT_HD: 1.35,
 }
 
 #: QIM strength (delta) per unified preset for the JPEG DCT engine.
 UNIFIED_QIM_DELTA: Dict[UnifiedPresetId, float] = {
-    UnifiedPresetId.LOCAL_HIGH_CAPACITY: 2.0,  # finer levels, more margin at QF 95
+    UnifiedPresetId.LOSSLESS: 2.0,  # finer levels, more margin at QF 95
     UnifiedPresetId.CHAT_STANDARD: 1.0,
     UnifiedPresetId.CHAT_HD: 1.0,
 }
@@ -141,14 +145,14 @@ class UnifiedPreset:
 
 
 UNIFIED_PRESETS: Dict[UnifiedPresetId, UnifiedPreset] = {
-    UnifiedPresetId.LOCAL_HIGH_CAPACITY: UnifiedPreset(
-        id=UnifiedPresetId.LOCAL_HIGH_CAPACITY,
-        label="Local / Pendrive — High Capacity",
+    UnifiedPresetId.LOSSLESS: UnifiedPreset(
+        id=UnifiedPresetId.LOSSLESS,
+        label="Lossless",
         description=(
             "For pendrives, disks, LAN, archives and direct file copies — "
             "maximum capacity with byte-exact extraction. PNG/BMP covers use "
-            "lossless spatial LSB embedding; JPEG covers use the highest DCT "
-            "quality (QF 95); video uses CRF 18 (near-lossless). "
+            "lossless spatial LSB embedding in the browser; JPEG covers use the "
+            "highest DCT quality (QF 95); video uses CRF 18 (near-lossless). "
             "No social-media robustness margins. The file extracts perfectly "
             "when copied without re-encoding."
         ),
@@ -237,12 +241,12 @@ UNIFIED_PRESETS: Dict[UnifiedPresetId, UnifiedPreset] = {
 
 #: Public order for the UI / API (default first).
 PRESET_ORDER: List[UnifiedPresetId] = [
-    UnifiedPresetId.LOCAL_HIGH_CAPACITY,
+    UnifiedPresetId.LOSSLESS,
     UnifiedPresetId.CHAT_STANDARD,
     UnifiedPresetId.CHAT_HD,
 ]
 
-DEFAULT_PRESET = UnifiedPresetId.LOCAL_HIGH_CAPACITY
+DEFAULT_PRESET = UnifiedPresetId.LOSSLESS
 
 
 @dataclass(frozen=True)
@@ -321,7 +325,7 @@ def resolve_preset(
     """Resolve a preset into the complete effective engine configuration.
 
     Args:
-        preset_id: unified preset id (``LOCAL_HIGH_CAPACITY`` | ``CHAT_STANDARD`` |
+        preset_id: unified preset id (``LOSSLESS`` | ``CHAT_STANDARD`` |
             ``CHAT_HD``) or a legacy alias (``light``/``standard``/``heavy``,
             ``chat_standard``/``chat_hd``/``lossless_high_capacity``).
         modality: "image" | "video".
@@ -438,7 +442,7 @@ def unified_to_container_preset(preset_id: UnifiedPresetId):
     """Map a unified preset to the channel-level :class:`CompressionPreset`
     consumed by the capacity calculators (TEXT_FILE compression multiplier).
 
-    LOCAL_HIGH_CAPACITY models capacity conservatively at ratio 1.0 (the exact
+    LOSSLESS models capacity conservatively at ratio 1.0 (the exact
     serialized container size is measured at encode time); the CHAT_* presets
     use the empirically measured DEFLATE ratio via the matching container
     preset.
@@ -446,7 +450,7 @@ def unified_to_container_preset(preset_id: UnifiedPresetId):
     from ..container import CompressionPreset
 
     return {
-        UnifiedPresetId.LOCAL_HIGH_CAPACITY: CompressionPreset.NO_COMPRESSION,
+        UnifiedPresetId.LOSSLESS: CompressionPreset.NO_COMPRESSION,
         UnifiedPresetId.CHAT_STANDARD: CompressionPreset.CHAT_STANDARD,
         UnifiedPresetId.CHAT_HD: CompressionPreset.CHAT_HD,
     }[preset_id]

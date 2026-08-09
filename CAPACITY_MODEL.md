@@ -4,7 +4,7 @@
 > lossless spatial (LSB) engine; JPEG rides block DCT-QIM tiers; video rides
 > the real I-frame keyframe grid. This document describes *where the numbers
 > come from*; the first-class carrier presets that select between these engines
-> are documented in `docs/CARRIER_PRESETS.md`.
+> are documented in `CARRIER_PRESETS.md`.
 
 ## Why
 
@@ -58,7 +58,7 @@ capacity).
 ## Channel compression factor
 
 The channel-level `compression_preset` (`NO_COMPRESSION | CHAT_STANDARD |
-CHAT_HD`, see `docs/COMPRESSION_PRESETS.md`) is the *only* factor that changes
+CHAT_HD`, see `COMPRESSION_PRESETS.md`) is the *only* factor that changes
 TEXT_FILE capacity: `NO_COMPRESSION` → 1.0 (raw bytes), `CHAT_*` → the measured
 median **1.35** DEFLATE ratio (`container.TEXT_COMPRESSION_FACTOR_CHAT`,
 calibrated by `evaluation/measure_compression.py`). TEXT_MESSAGE capacity is

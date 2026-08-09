@@ -17,13 +17,21 @@ Harpocrates/
 │   ├── artifacts/api-server/    Express 5 (currently GET /api/healthz only)
 │   ├── artifacts/mockup-sandbox/ shadcn component sandbox
 │   └── lib/              Orval-generated api clients + api-spec (OpenAPI) + Drizzle db client
-├── docs/HOW_IT_WORKS.md  design documentation (PDF generated)
-├── WORK_AND_FAILURES.md  work report + failure log (single ledger)
-├── AGENT_RULES.md        living rules for the AI coding agent
-├── message/              sample payloads (HTML + image)
+├── HOW_IT_WORKS.md        design documentation (PDF generated to docs/)
+├── CAPACITY_MODEL.md      measured capacity per cover/preset (root by rule)
+├── CARRIER_PRESETS.md     legacy carrier-preset axis (kept for history)
+├── COMPRESSION_PRESETS.md compression-preset axis (kept for history)
+├── UNIFIED_PRESETS.md     current unified user-facing preset contract
+├── REFERENCE_REVIEW.md    studied third-party references + license map
+├── WORK_AND_FAILURES.md   work report + failure log (single ledger)
+├── AGENT_RULES.md         living rules for the AI coding agent
+├── message/               sample payloads (HTML + image)
 ├── codebase_and_repo_audit.md  single source of truth for reuse/build-fresh decisions
-└── evaluation/           synthetic corpus + benchmarks + results
+└── evaluation/            synthetic corpus + benchmarks + results
 ```
+
+> All Markdown documentation lives at the repo root (audit rule); `docs/` holds
+> generated artifacts only (`HOW_IT_WORKS.pdf` + `generate_pdf.py`).
 
 ## Remote
 

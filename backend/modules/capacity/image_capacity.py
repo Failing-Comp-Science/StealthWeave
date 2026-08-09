@@ -30,7 +30,11 @@ from ..container import (
     CompressionPreset,
     container_overhead_bytes,
 )
-from ._dct import analyze_texture, rgb_to_luma
+from ._dct import (
+    _blockwise_dct2,
+    analyze_texture_from_coeffs,
+    rgb_to_luma,
+)
 from .accounting import (
     max_payload_channel_bits,
     max_payload_from_container_bytes,
@@ -124,20 +128,24 @@ def image_capacity(
     luma = rgb_to_luma(np.asarray(rgb))
     # NOTE (calibrated 2026-08-08): ``text_compression_factor`` is now the
     # empirically measured TEXT_FILE DEFLATE ratio (median 1.35 on the
-    # deterministic synthetic corpus; see docs/COMPRESSION_PRESETS.md). Applied
+    # deterministic synthetic corpus; see COMPRESSION_PRESETS.md). Applied
     # as a float so sub-integer factors are honoured (measured median sits
     # below 2.0, which the legacy int() truncation would have discarded).
     text_factor = compression_preset.text_compression_factor
 
+    # Phase 1.6: compute the block-DCT ONCE and re-quantize per preset (the old
+    # loop ran the full DCT twice per preset — ~6x on 4K).
+    coeffs = _blockwise_dct2(luma)
+
     results: List[Dict] = []
     for preset in IMAGE_PRESETS:
         quant = scaled_luma_table(preset.target_quality_factor)
-        total_blocks, high_blocks, usable_slots = analyze_texture(luma, quant)
+        total_blocks, high_blocks, usable_slots = analyze_texture_from_coeffs(coeffs, quant)
 
         # The engine's carrier eligibility: blocks with >= MIN_AC non-zero
         # quantized AC coefficients (one parity bit per block), derated for
         # the carriers that stay unstable at the preset's quality.
-        n_eligible = int(_eligible_blocks(luma, quant) * _PRESET_DERATE.get(preset.id, 1.0))
+        n_eligible = int(_eligible_from_coeffs(coeffs, quant) * _PRESET_DERATE.get(preset.id, 1.0))
         capacity = _max_text_bytes(n_eligible, text_factor)
 
         results.append({
@@ -166,11 +174,16 @@ def _eligible_blocks(luma: np.ndarray, quant_table: np.ndarray) -> int:
     Matches the embedder's carrier-eligibility rule (``dct_embedder``); the
     one-bit-per-block parity channel uses exactly these blocks in raster order.
     """
-    h, w = luma.shape
-    nby, nbx = h // 8, w // 8
+    return _eligible_from_coeffs(_blockwise_dct2(luma), quant_table)
+
+
+def _eligible_from_coeffs(coeffs: np.ndarray, quant_table: np.ndarray) -> int:
+    """Like :func:`_eligible_blocks`, but from PRE-COMPUTED block DCT coeffs
+    so a multi-preset capacity call only runs the DCT once (Phase 1.6)."""
+    nby, _, nbx, _ = coeffs.shape
     if nby == 0 or nbx == 0:
         return 0
-    quant = np.round(_blockwise_dct2(luma) / quant_table[None, :, None, :])
+    quant = np.round(coeffs / quant_table[None, :, None, :])
     quant[:, 0, :, 0] = 0
     nz = np.count_nonzero(quant, axis=(1, 3))
     return int(np.count_nonzero(nz >= MIN_AC))

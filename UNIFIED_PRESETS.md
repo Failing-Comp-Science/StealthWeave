@@ -1,9 +1,10 @@
 # Harpocrates — Unified Presets (backend + frontend)
 
 > Status: **implemented end-to-end (2026-08-09)** — single user-facing preset
-> axis replaces the two legacy axes (carrier preset × payload compression).
-> Backend registry/resolver, capacity model, API, OpenAPI spec, orval codegen,
-> frontend UI, and e2e coverage are all in place. Backend suite: 219 passing.
+> axis (`LOSSLESS`) replaces the two legacy axes (carrier preset × payload
+> compression) and the former multi-preset catalog. Backend registry/resolver,
+> capacity model, API, OpenAPI spec, orval codegen, frontend UI, and e2e
+> coverage are all in place. Backend suite: 221 passing.
 
 ## Why
 
@@ -12,24 +13,31 @@ The pre-2026-08-09 API exposed two orthogonal axes — a **carrier preset**
 compression** choice (`NO_COMPRESSION`/`DEFLATE`, see `COMPRESSION_PRESETS.md`).
 For end users that is one knob too many: the combination is what defines a
 channel ("local copy" vs "chat upload"), and most combinations are nonsense.
-A single **unified preset** names the whole strategy.
+A single **unified preset** names the whole strategy. Phase 2 (2026-08-09)
+collapsed that further: the UI exposes exactly one preset, **LOSSLESS**.
 
 ## The catalog
 
 Defined in `backend/modules/capacity/unified_presets.py`:
 `UnifiedPresetId`, `UnifiedPreset` (frozen dataclass), `UNIFIED_PRESETS`,
-`PRESET_ORDER`, `DEFAULT_PRESET = LOCAL_HIGH_CAPACITY`.
+`PRESET_ORDER`, `DEFAULT_PRESET = LOSSLESS`.
 
 | Preset id | Label (UI) | JPEG QF | Video CRF | QIM δ | Image derate | Engine tier | Channel |
 |---|---|---|---|---|---|---|---|
-| `LOCAL_HIGH_CAPACITY` | Local / Pendrive — High Capacity | 95 | 18 | 2.0 | 1.0 | light | pendrive, disk, LAN, byte-exact copy |
-| `CHAT_STANDARD` | Chat Standard | 75 | 28 | 1.0 | 0.4 | heavy | ordinary social/chat uploads |
-| `CHAT_HD` | Chat HD | 85 | 23 | 1.0 | 0.6 | standard | higher-quality chat uploads |
+| `LOSSLESS` | Lossless | 95 | 18 | 2.0 | 1.0 | light | pendrive, disk, LAN, byte-exact copy |
+| `CHAT_STANDARD` (backend-only) | Chat Standard | 75 | 28 | 1.0 | 0.4 | heavy | ordinary social/chat uploads |
+| `CHAT_HD` (backend-only) | Chat HD | 85 | 23 | 1.0 | 0.6 | standard | higher-quality chat uploads |
 
-All three presets share one **payload compression policy**:
-`deflate_if_smaller` — the container requests DEFLATE (zlib level 9) but sets
-`FLAG_COMPRESSED` only when the payload actually shrinks, so tiny or
-non-repetitive messages round-trip uncompressed regardless of preset.
+`CHAT_STANDARD` / `CHAT_HD` remain in the backend registry for old clients and
+legacy token resolution; they are **not** offered by the UI anymore. The
+pre-rename id `LOCAL_HIGH_CAPACITY` (and the Stage-2 `LOSSLESS_HIGH_CAPACITY`)
+are legacy aliases that resolve onto `LOSSLESS` and are echoed as `LOSSLESS`
+in the API.
+
+All presets share one **payload compression policy**: `deflate_if_smaller` —
+the container requests DEFLATE (zlib level 9) but sets `FLAG_COMPRESSED` only
+when the payload actually shrinks, so tiny or non-repetitive messages
+round-trip uncompressed regardless of preset.
 
 Engine selection stays **format-driven**, not preset-driven: PNG/BMP →
 spatial LSB (`image_algorithm="spatial_lsb"`, bpc=1, effectively lossless);
@@ -42,16 +50,16 @@ Engine tiers ↔ unified (both directions live in `unified_presets.py`):
 
 | Legacy engine tier | Unified preset |
 |---|---|
-| `light` | `LOCAL_HIGH_CAPACITY` |
+| `light` | `LOSSLESS` |
 | `standard` | `CHAT_HD` |
 | `heavy` | `CHAT_STANDARD` |
 
 Legacy numeric tokens map by value (matching the old API boundaries): QF ≥ 90 →
-LOCAL, ≥ 80 → CHAT_HD, else CHAT_STANDARD; CRF ≤ 20 → LOCAL, ≤ 25 → CHAT_HD,
-else CHAT_STANDARD.
+LOSSLESS, ≥ 80 → CHAT_HD, else CHAT_STANDARD; CRF ≤ 20 → LOSSLESS, ≤ 25 →
+CHAT_HD, else CHAT_STANDARD.
 
-TEXT_FILE compression factors: `LOCAL_HIGH_CAPACITY` → **1.0** (no inflation;
-measured from the actual serialized container), `CHAT_*` → **1.35**
+TEXT_FILE compression factors: `LOSSLESS` → **1.0** (no inflation; measured
+from the actual serialized container), `CHAT_*` → **1.35**
 (`TEXT_COMPRESSION_FACTOR_CHAT`, median DEFLATE ratio — calibration detail in
 `COMPRESSION_PRESETS.md`).
 
@@ -61,31 +69,32 @@ measured from the actual serialized container), `CHAT_*` → **1.35**
 
 `POST /api/stego/capacity` (and `/image/capacity`, `/video/capacity`):
 
-- `preset` (form, optional): unified id or legacy token; default
-  `LOCAL_HIGH_CAPACITY`. A legacy `compression_preset` explicitly ≠
-  `NO_COMPRESSION` still wins over it (legacy compat).
+- `preset` (form, optional): unified id or legacy token; default `LOSSLESS`.
+  A legacy `compression_preset` explicitly ≠ `NO_COMPRESSION` still wins over
+  it (legacy compat).
 - Rows are annotated with `preset_id` / `preset_label` (the unified preset each
   tier row is now reported under; the PNG/BMP-only `lossless_high_capacity`
-  row reports `preset_id="LOCAL_HIGH_CAPACITY"`).
+  row reports `preset_id="LOSSLESS"`).
 - Response carries `preset` (echo of the unified id, or `None` if the request
-  resolved through a legacy-only token).
+  resolved through a legacy-only token). The pre-rename id `LOCAL_HIGH_CAPACITY`
+  echoes as `LOSSLESS`.
 
 ### Encode
 
 `POST /api/stego/encode`, `/api/stego/image/encode`, `/api/stego/video/encode`:
 
-- `preset` (form, optional): unified id or legacy token; default
-  `LOCAL_HIGH_CAPACITY`.
+- `preset` (form, optional): unified id or legacy token; default `LOSSLESS`.
 - The `X-Stego-Preset` response header echoes the unified preset id (unified
   path only), alongside the existing `X-Stego-CRF` etc.
 - Legacy fields are still accepted, but **legacy wins only when it disagrees
   with the default**, so modern calls never need them:
 
   **Resolution precedence (locked by `tests/test_api_unified_presets.py`):**
-  1. explicit unified `preset` token (e.g. `CHAT_HD`);
+  1. explicit unified `preset` token (e.g. `LOSSLESS`, or the alias
+     `LOCAL_HIGH_CAPACITY`);
   2. legacy `carrier_preset` — only when ≠ its default `CHAT_STANDARD`;
   3. legacy `preset` token (`light`/`standard`/`heavy`, or bare QF/CRF);
-  4. default `LOCAL_HIGH_CAPACITY`.
+  4. default `LOSSLESS`.
 
   **Payload-compression ladder:** explicit `payload_compression` form field >
   legacy `compress: bool` > preset policy (`deflate_if_smaller`). Because every
@@ -103,22 +112,24 @@ measured from the actual serialized container), `CHAT_*` → **1.35**
   `api-client-react` + `zod`.
 - `encode-decode-mock.ts` mirrors the catalog (`UNIFIED_PRESETS`, labels,
   `unifiedPresetToTierId` for the PNG/BMP single-row case).
-- `encode.tsx`: step 04 is a single preset radio group (testids `preset-{id}`,
-  `preset-group`). Selecting a preset re-runs the live capacity fit check
-  (`refetchCapacity`). The old step-06 payload-compression picker is gone.
-- `stego-api.ts` / `capacity-api.ts`: only `preset` is sent; legacy
+- `encode.tsx`: step 04 is a **static** "PRESET: Lossless" card (testid
+  `preset-LOSSLESS`); the multi-preset radio group and preset-change refetch
+  were removed — the cover is analyzed once with `preset=LOSSLESS`.
+- `stego-api.ts` / `capacity-api.ts`: only `preset=LOSSLESS` is sent; legacy
   `carrier_preset` / `payload_compression` / `compress` / `compression_preset`
   fields were dropped.
-- Result panel shows the resolved PRESET and the policy label "DEFLATE (IF
-  SMALLER)" (the container's actual `FLAG_COMPRESSED` is what decode shows).
+- Result panel shows the resolved PRESET label and the policy label "DEFLATE
+  (IF SMALLER)" (the container's actual `FLAG_COMPRESSED` is what decode shows).
 
 ## Tests
 
 - `backend/tests/test_unified_presets.py` (16): registry/aliases/numeric
   mappings/ResolvedPresetConfig.
-- `backend/tests/test_api_unified_presets.py` (15): capacity echo + factor +
-  row annotation, precedence over the legacy carrier axis, legacy token/alias
-  compat, `PRESET_INVALID` 400, `X-Stego-CRF`/`X-Stego-Preset` headers.
+- `backend/tests/test_api_unified_presets.py` (17): capacity echo + factor +
+  row annotation, JPEG capacity ordering LOSSLESS ≥ CHAT_HD ≥ CHAT_STANDARD,
+  pre-rename alias acceptance, precedence over the legacy carrier axis, legacy
+  token/alias compat, `PRESET_INVALID` 400, `X-Stego-CRF`/`X-Stego-Preset`
+  headers.
 - `frontend/artifacts/harpocrates/e2e/no-compression.spec.ts`: UI round trip
-  asserting the default preset is selected and the result panel shows the
-  preset label + "DEFLATE (IF SMALLER)".
+  asserting the default `LOSSLESS` preset is selected and the result panel
+  shows the preset label + "DEFLATE (IF SMALLER)".

@@ -7,7 +7,7 @@ model and citations). Public entry points:
 
 Channel-level compression is expressed with the first-class
 ``CompressionPreset`` (NO_COMPRESSION / CHAT_STANDARD / CHAT_HD) defined in
-``modules.container`` — see its docstring and ``docs/COMPRESSION_PRESETS.md``.
+``modules.container`` — see its docstring and ``COMPRESSION_PRESETS.md``.
 
 Carrier presets (new in Stage 2):
     CarrierPreset, CarrierPresetId, CarrierModality,

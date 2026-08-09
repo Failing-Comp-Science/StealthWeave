@@ -6,7 +6,7 @@ This document is a single ledger of **what has been built** in the Harpocrates
 steganography project and **every failure incurred along the way**
 — both the ones already fixed and the ones still open. It complements
 `codebase_and_repo_audit.md` (the "source of truth" for reuse vs build-fresh
-decisions) and `docs/HOW_IT_WORKS.md` (design rationale).
+decisions) and `HOW_IT_WORKS.md` (design rationale).
 
 > **Naming note (2026-08-08):** the project was briefly renamed away from
 > "Harpocrates" (repo/folder/docs used a different name). That rename is now
@@ -71,7 +71,7 @@ Harpocrates/
 ├── frontend/                Replit pnpm workspace (React 19 + Vite + shadcn)
 │   └── artifacts/harpocrates/   client app (encode.tsx / decode.tsx now split)
 │   └── lib/api-* + api-spec/   Orval-generated clients + OpenAPI
-├── docs/HOW_IT_WORKS.md         design doc (+ PDF)
+├── HOW_IT_WORKS.md         design doc (+ PDF)
 ├── WORK_AND_FAILURES.md         this file (single ledger)
 ├── AGENT_RULES.md               living rules for the AI coding agent
 ├── message/                     sample payloads (README, html, jpg)
@@ -198,7 +198,7 @@ Harpocrates/
 - **Contract:** OpenAPI spec updated (`CompressionPreset` schema, capacity
   query param, encode Form fields); Orval React + zod clients regenerated;
   `CapacityResponse.compression_preset` non-null, per-row fields nullable.
-- **Docs:** `docs/COMPRESSION_PRESETS.md` records the preset table, the flow,
+- **Docs:** `COMPRESSION_PRESETS.md` records the preset table, the flow,
   the measured factors and the calibration script. Tests: **123 backend pass**;
   frontend `tsc --noEmit` exit 0.
 
@@ -559,7 +559,7 @@ Harpocrates/
    backend suite passes (126 tests), and the API returns the fixed numbers.
 
 1. **TEXT_FILE capacity mismatch (old global 2.5x overstatement)** — RESOLVED
-   (§2.6c, `docs/COMPRESSION_PRESETS.md`): the capacity model no longer applies
+   (§2.6c, `COMPRESSION_PRESETS.md`): the capacity model no longer applies
    a fixed 2.5x to every channel. `NO_COMPRESSION` = exactly **1.0**;
    `CHAT_STANDARD` / `CHAT_HD` = **1.35** (median TEXT_FILE DEFLATE ratio
    measured by `evaluation/measure_compression.py`, p10 1.0 / p90 49.9).
@@ -636,7 +636,7 @@ Harpocrates/
    `standard`/`heavy` report real capacity (equal to `light` because the carrier
    pool is CRF-independent). NOTE: the capacity model no longer unconditionally
    assumes a 2.5x TEXT_FILE ratio — `NO_COMPRESSION` uses 1.0 and the CHAT_*
-   factors are the measured median 1.35 (§2.6c, `docs/COMPRESSION_PRESETS.md`).
+   factors are the measured median 1.35 (§2.6c, `COMPRESSION_PRESETS.md`).
 2. **Calibrated (2026-08-08)** — done by `evaluation/measure_compression.py`;
    `CHAT_*` = 1.35 (median), `NO_COMPRESSION` = 1.0, `TODO(capacity)` markers
    removed. If the corpus changes, re-run the script and update
@@ -683,7 +683,7 @@ Harpocrates/
     document the mapping as deliberate.
 11. **Audio carrier is blocked on A2/A1** (§7-A3): `CARRIER_AUDIO` API/UI must
     NOT ship before the probe + per-preset capacity path exist.
-12. **Close the reference-review threads** (`docs/REFERENCE_REVIEW.md` §6):
+12. **Close the reference-review threads** (`REFERENCE_REVIEW.md` §6):
     HideUrBits live crawl, and the javid Hamming(7,4) → `modules/coding.py`
     extraction (MIT-permitted, approved — `AGENT_RULES.md` §5).
 
@@ -692,7 +692,7 @@ Harpocrates/
 ## 7. Audit log — symptoms, evidence, root causes (2026-08-09)
 
 > Source: reference audit + implementation deep-dive of 2026-08-09
-> (`docs/REFERENCE_REVIEW.md`, `codebase_and_repo_audit.md` §5). Two symptom
+> (`REFERENCE_REVIEW.md`, `codebase_and_repo_audit.md` §5). Two symptom
 > groups: **A = implementation-audit symptoms** (newly identified, mostly open),
 > **B = measured robustness failures** (already in §4, re-verified here with
 > status). Each entry: symptom → evidence → suspected root cause → next steps.
@@ -711,7 +711,7 @@ Harpocrates/
 - *Next steps:* either (a) add `carrier_preset` to `/api/stego/capacity` and
   re-fetch when the picker changes, or (b) keep the client map but add a backend
   self-test asserting map == engine tiers, documented as deliberate in
-  `docs/CARRIER_PRESETS.md`. Tracked: `AGENT_RULES.md` §9.9.
+  `CARRIER_PRESETS.md`. Tracked: `AGENT_RULES.md` §9.9.
 
 **A2. Asymmetric carrier detection — no backend magic-byte probe.**
 - *Evidence:* the client sniffs magic bytes (`file-classify.ts:63-87`: JPEG/PNG/
@@ -790,3 +790,126 @@ Harpocrates/
 - *Status:* **MITIGATED (2026-08-09, §2.12 / §4.6.0)** — lazy `cv2` import
   removes the crash; the single pinned video stack for deployment is still
   open (A4 / `AGENT_RULES.md` §9.7).
+
+---
+
+## §8 — Audit 2026-08-09: findings + implementation plan
+
+Evidence-cited full writeup: `AUDIT.md` (repo root). This ledger records the
+audit verdicts and the queued fix list (no fixes were implemented during the
+audit).
+
+### Audit verdicts
+1. **Slow detection is the auto-fired capacity probe, not the classifier.**
+   `file-classify.ts` reads 16 header bytes; `encode.tsx` calls `analyzeCover()`
+   on every cover selection and preset change, and video capacity full-decodes
+   the clip 2-3× (`video_capacity._probe_pyav`, `keyframe_grid`,
+   `_I_frame_sampled_blocks`).
+2. **UI is single-preset** — the two-axis residue is API contract (legacy
+   `carrier_preset`/`payload_compression`/`compress`/`compression_preset` still
+   accepted), the `compression_preset`-keyed capacity response, and the two axis
+   docs.
+3. **Same capacity across presets is by design** for video (CRF-independent
+   carrier count) and PNG/BMP (spatial = pixel-count). Only JPEG differs.
+4. **Video capacity < PNG**: 20,505 B vs 85,818 B — video uses ~1/30 frames ×
+   1/64 px, mid-band-only, plus RS overhead.
+5. **"Stuck at 55%"** = fixed 55% progress events + fetch block with no
+   timeout/streaming; backend video closed loop (`MAX_ITERS=8`) re-encodes +
+   decodes the whole clip per iteration.
+6. **Frontend image stego**: `stego.ts` is v1-only + orphaned; PNG/BMP LSB
+   feasible in browser (needs v2 zlib + RS(255,223) port + Worker); JPEG DCT-QIM
+   stays backend.
+7. **4K blocked by pipeline**: all-frames-in-RAM (24.9 MB/frame), Python block
+   loop (129,600 blocks/I-frame), full-decode probes, no timeout.
+
+### Queued fix plan (see `AGENT_RULES.md` §12 for details)
+- **P0:** metadata-only probe + capacity cache; real video progress (SSE/poll)
+  from the closed loop; timeouts + cancel; stream video frames + vectorize
+  `_count_eligible`; per-preset lossless slot model; collapse UI to one Lossless
+  preset.
+- **P1:** deprecate legacy preset form fields; `preset_id`-keyed capacity
+  response; complete-and-wire `stego.ts`; single `/api/healthz`; archive axis
+  docs.
+- **P2:** WASM JPEG in-browser; 4K path with P0 fixes; re-enable chat presets
+  when a transmission use case exists.
+
+### Doc moves (this task)
+All `.md` moved to repo root: `CAPACITY_MODEL.md`, `CARRIER_PRESETS.md`,
+`COMPRESSION_PRESETS.md`, `HOW_IT_WORKS.md`, `REFERENCE_REVIEW.md`,
+`UNIFIED_PRESETS.md`, `replit.md` (from `frontend/`). `docs/` holds only
+generated artifacts (`HOW_IT_WORKS.pdf`, `generate_pdf.py`; paths updated).
+Cross-references updated; verified no residual `docs/X.md` links.
+
+---
+
+## 7. LOSSLESS preset rename (2026-08-09, Phase 2 backend + frontend)
+
+### What changed
+- `UnifiedPresetId` canonical id renamed `LOCAL_HIGH_CAPACITY` → **`LOSSLESS`**
+  in `backend/modules/capacity/unified_presets.py`; `LOCAL_HIGH_CAPACITY` and
+  the Stage-2 `LOSSLESS_HIGH_CAPACITY` are now legacy aliases -> LOSSLESS in
+  `_LEGACY_ALIASES`. `DEFAULT_PRESET`, `PRESET_ORDER`,
+  `UNIFIED_TO_ENGINE_TIER`, `UNIFIED_TEXT_COMPRESSION_FACTOR`, `UNIFIED_QIM_DELTA`,
+  `unified_to_container_preset`, label ("Lossless") and description updated.
+- `backend/app/api/stego.py`: new `_is_lossless_alias()` so pre-rename ids still
+  resolve via the unified path on `/capacity` (echo `preset: "LOSSLESS"`) and
+  `/encode` (no more 400 for old clients); Form/Query defaults -> `LOSSLESS`;
+  `_annotate_unified` emits `LOSSLESS`.
+- `frontend/lib/api-spec/openapi.yaml`: defaults + descriptions + `PresetCapacity`
+  enum -> `LOSSLESS`; orval regenerated `api-client-react` + `zod` (`pnpm run
+  codegen`).
+- Frontend Phase 2 UI: `encode-decode-mock.ts` collapses `UNIFIED_PRESETS` to a
+  single LOSSLESS entry (`DEFAULT_UNIFIED_PRESET = "LOSSLESS"`); `encode.tsx`
+  drops the preset RadioGroup + `changePreset`/`refetchCapacity` state and shows
+  a static "PRESET: Lossless" card (testid `preset-LOSSLESS`); `capacity-api.ts` /
+  `stego-api.ts` send `preset=LOSSLESS`. e2e `no-compression.spec.ts` updated.
+
+### Tests / verification
+- Backend full suite: **221 passed** (was 219; +2 new: JPEG LOSSLESS >= CHAT_HD
+  >= CHAT_STANDARD order, pre-rename alias `preset=LOCAL_HIGH_CAPACITY` still
+  accepted and echoed as LOSSLESS). `test_api_unified_presets.py` now 17.
+- Frontend: `pnpm run typecheck` clean across libs + artifacts; `vite build`
+  (PORT=5173 BASE_PATH=/) regenerates `dist/public` (old bundle removed).
+- OpenAPI codegen: `pnpm run codegen` in `frontend/lib/api-spec` (orval v8.23).
+
+## 8. Phase 1 fast cover detection (2026-08-09, backend P1.6 + frontend P1)
+
+### What changed
+- Backend P1.6 DCT-once refactor: `backend/modules/capacity/image_capacity.py`
+  now computes `_blockwise_dct2(luma)` once and reuses it via
+  `_eligible_from_coeffs` for both the JPEG capacity path and the texture
+  analysis; `_dct.py` gained `analyze_texture_from_coeffs`.
+- `frontend/artifacts/harpocrates/src/lib/stego/capacity.ts`: client-side spatial
+  LSB capacity model mirroring the backend (`spatialContainerBudget`,
+  `rsEncodedLen` = n + ceil(n/223)*32, `containerOverheads` 94/190,
+  `maxPayloadFromContainerBytes`, `computeSpatialCapacity`). Verified numerically
+  exact vs backend: 96x96 -> 2874/2778 B, 512x512 -> 85818/85722 B,
+  1920x1080 -> 679866/679770 B.
+- `src/lib/image-dimensions.ts`: instant format sniffers (PNG IHDR, BMP LE with
+  core header, GIF, JPEG SOF walk needing >=512-byte header, WEBP VP8/VP8L/VP8X)
+  — no `new Image()` decode. `file-drop-zone.tsx` `buildDropFile` uses
+  `sniffImageDimensions` on a 512-byte header for images.
+- `capacity-api.ts` rewrite: `payloadTypesFor` (client-side payload options),
+  PNG/BMP via `spatialAnalysis` (no network), JPEG/video cached
+  (`kind|format|size|header16hash` SHA-256), abortable probes, 10s video timeout
+  -> `CapacityTimeoutError`, `clearCapacityCache`.
+- `encode.tsx`: `analyzeAbort` abort, `capacityTimedOut` state, step-02 renders
+  from client payload options, step-04 "Checking…" while analyzing + capacity
+  timeout alert, `canEncode` allows encode on timeout.
+
+### Failure found and fixed during this phase
+- Symptom: e2e round-trip showed `HTTP 400 Unknown preset 'LOSSLESS'. Expected
+  light | standard | heavy or a quality factor 1-100.` after clicking Encode.
+- Root cause: **NOT a code bug.** Playwright's `webServer` uses
+  `reuseExistingServer: !CI`, so the test silently reused a stale backend
+  (uvicorn started 9:14PM) + Vite (9:15PM) that predated the LOSSLESS rename and
+  rejected the token via the legacy `_resolve_preset` path. Direct
+  `TestClient` encode with `preset=LOSSLESS` returned 200.
+- Fix: killed stale `uvicorn`/`vite` processes on :8000/:5173 and re-ran. If the
+  e2e errors with a legacy-preset 400 again, check for leftover servers first.
+
+### Tests / verification
+- Backend full suite: **221 passed** (unchanged after P1.6 refactor).
+- Frontend: `pnpm run typecheck` clean; `vite build` clean.
+- e2e `no-compression.spec.ts`: **1 passed** (round trip green after restarting
+  servers).

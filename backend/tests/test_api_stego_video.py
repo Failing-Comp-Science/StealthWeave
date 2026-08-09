@@ -343,7 +343,7 @@ def test_video_carrier_default_applies_when_field_absent(video_cover_bytes):
 
 
 def test_video_lossless_carrier_roundtrip(video_cover_bytes):
-    # lossless_high_capacity (legacy alias of the unified LOCAL_HIGH_CAPACITY)
+    # lossless_high_capacity (legacy alias of the unified LOSSLESS)
     # -> CRF 18, DEFLATE-if-smaller payload policy; must round-trip exactly.
     with tempfile.TemporaryDirectory() as td:
         r = client.post(

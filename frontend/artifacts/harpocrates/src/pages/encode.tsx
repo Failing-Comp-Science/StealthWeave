@@ -13,7 +13,7 @@ import { toast } from "@/hooks/use-toast";
 import { formatBytes, formatDuration } from "@/lib/format";
 import { DEFAULT_UNIFIED_PRESET, getUnifiedPresetLabel, getPayloadTypeLabel, UNIFIED_PRESETS, unifiedPresetToTierId } from "@/lib/encode-decode-mock";
 import type { CompressionPreset, EmbedProgress, EmbedResult, PayloadType, UnifiedPresetId } from "@/lib/encode-decode-mock";
-import { analyzeCover, CapacityError } from "@/lib/capacity-api";
+import { analyzeCover, CapacityError, CapacityTimeoutError, payloadTypesFor } from "@/lib/capacity-api";
 import { runEmbed, StegoApiError, type EncodeResult as StegoEncodeResult } from "@/lib/stego-api";
 
 const MAX_MESSAGE = 4000;
@@ -34,10 +34,10 @@ export default function EncodePage() {
   const [cover, setCover] = useState<DropFile | null>(null);
   const [analysis, setAnalysis] = useState<{ presets: CompressionPreset[]; payloadTypes: PayloadType[] } | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
+  const [capacityTimedOut, setCapacityTimedOut] = useState(false);
   const [payloadType, setPayloadType] = useState<PayloadType | null>(null);
   const [message, setMessage] = useState("");
   const [payloadFile, setPayloadFile] = useState<DropFile | null>(null);
-  const [preset, setPreset] = useState<UnifiedPresetId>(DEFAULT_UNIFIED_PRESET);
   const [password, setPassword] = useState("");
   const [phase, setPhase] = useState<EmbedProgress["stage"]>("idle");
   const [progress, setProgress] = useState<EmbedProgress | null>(null);
@@ -45,6 +45,7 @@ export default function EncodePage() {
   const [error, setError] = useState("");
   const [errorCode, setErrorCode] = useState<string | null>(null);
   const analyzeId = useRef(0);
+  const analyzeAbort = useRef<AbortController | null>(null);
   const encodeId = useRef(0);
   const encodeAbort = useRef<AbortController | null>(null);
   // Latest object URLs, tracked so an unmount can revoke them without stale closures.
@@ -60,14 +61,20 @@ export default function EncodePage() {
     };
   }, []);
 
-  // --- Cover selection → real /api/stego/capacity (presets + allowed payloads) ---
+  // --- Cover selection → capacity (PNG/BMP client-side, JPEG/video cached API) ---
   const selectCover = (file: DropFile) => {
-    // A new cover invalidates any in-flight encode and all prior results.
+    // A new cover invalidates any in-flight encode + capacity probe and all
+    // prior results.
     encodeAbort.current?.abort();
+    analyzeAbort.current?.abort();
     encodeId.current += 1;
     setCover((prev) => { if (prev) URL.revokeObjectURL(prev.url); return file; });
     setAnalysis(null);
-    setPayloadType(null);
+    setCapacityTimedOut(false);
+    // Payload options are derived client-side from the cover modality (Phase 1):
+    // step 02 renders immediately instead of waiting on the capacity endpoint.
+    const options = payloadTypesFor(file.kind);
+    setPayloadType(options[0] ?? "text");
     setPayloadFile((prev) => { if (prev) URL.revokeObjectURL(prev.url); return null; });
     setResult(null);
     setPhase("idle");
@@ -76,21 +83,30 @@ export default function EncodePage() {
     setErrorCode(null);
     setAnalyzing(true);
     const id = ++analyzeId.current;
-    analyzeCover(file, preset)
+    const controller = new AbortController();
+    analyzeAbort.current = controller;
+    analyzeCover(file, { signal: controller.signal })
       .then((res) => {
         if (analyzeId.current !== id) return;
         setAnalysis({ presets: res.presets, payloadTypes: res.payloadTypes });
-        setPayloadType(res.payloadTypes[0] ?? "text");
-        // Keep the chosen preset when the new cover supports it (a PNG/BMP
-        // cover maps every preset onto its lossless spatial tier).
-        setPreset((prev) =>
-          unifiedPresetToTierId(prev, res.presets.map((p) => p.id)) ? prev : DEFAULT_UNIFIED_PRESET,
-        );
+        setCapacityTimedOut(false);
         setAnalyzing(false);
       })
       .catch((err) => {
         if (analyzeId.current !== id) return;
         setAnalyzing(false);
+        if (err instanceof CapacityTimeoutError) {
+          // Video probe timed out: keep Encode enabled; the server re-verifies
+          // fit at encode time.
+          setCapacityTimedOut(true);
+          setAnalysis({ presets: [], payloadTypes: options });
+          toast({
+            variant: "default",
+            title: "Capacity check timed out",
+            description: "You can still try to encode — the server re-verifies fit.",
+          });
+          return;
+        }
         const message = err instanceof CapacityError ? err.message : "Could not analyze this cover file.";
         setError(message);
         toast({ variant: "destructive", title: "Capacity check failed", description: message });
@@ -105,10 +121,11 @@ export default function EncodePage() {
 
   const clearCover = () => {
     encodeAbort.current?.abort();
+    analyzeAbort.current?.abort();
     encodeId.current += 1;
     if (cover) URL.revokeObjectURL(cover.url);
     if (payloadFile) URL.revokeObjectURL(payloadFile.url);
-    setCover(null); setAnalysis(null); setAnalyzing(false); setPayloadType(null);
+    setCover(null); setAnalysis(null); setCapacityTimedOut(false); setAnalyzing(false); setPayloadType(null);
     setPayloadFile(null); setResult(null); setPhase("idle"); setProgress(null);
     setError(""); setErrorCode(null);
   };
@@ -129,37 +146,8 @@ export default function EncodePage() {
   };
   const clearPayloadFile = () => { if (payloadFile) URL.revokeObjectURL(payloadFile.url); setPayloadFile(null); };
 
-  // --- Preset change → re-fetch preset-aware capacity ------------------------
-  const refetchCapacity = (next: UnifiedPresetId) => {
-    if (!cover || analyzing) return;
-    setAnalyzing(true);
-    const id = ++analyzeId.current;
-    analyzeCover(cover, next)
-      .then((res) => {
-        if (analyzeId.current !== id) return;
-        setAnalysis({ presets: res.presets, payloadTypes: res.payloadTypes });
-        setAnalyzing(false);
-      })
-      .catch((err) => {
-        if (analyzeId.current !== id) return;
-        setAnalyzing(false);
-        const message = err instanceof CapacityError ? err.message : "Could not re-analyze this cover for the selected preset.";
-        setError(message);
-        toast({ variant: "destructive", title: "Capacity check failed", description: message });
-      });
-  };
-
-  const changePreset = (next: UnifiedPresetId) => {
-    if (next === preset) return;
-    setPreset(next);
-    setResult(null);
-    setPhase("idle");
-    setError("");
-    setErrorCode(null);
-    refetchCapacity(next);
-  };
-
   // --- Derived state -------------------------------------------------------
+  const payloadTypes = cover ? payloadTypesFor(cover.kind) : [];
   const payloadSize = useMemo(() => {
     if (payloadType === "text") return new TextEncoder().encode(message).length;
     return payloadFile?.file.size ?? 0;
@@ -167,17 +155,19 @@ export default function EncodePage() {
 
   const hasPayload = payloadType === "text" ? message.trim().length > 0 : payloadFile != null;
   const tierIds = analysis?.presets.map((p) => p.id) ?? [];
-  const tierId = unifiedPresetToTierId(preset, tierIds);
+  const tierId = unifiedPresetToTierId(DEFAULT_UNIFIED_PRESET, tierIds);
   const selectedPreset = (tierId && analysis?.presets.find((p) => p.id === tierId)) ?? null;
   const maxBytes = selectedPreset && payloadType ? selectedPreset.maxBytesForPayload[payloadType] : 0;
-  // Live capacity check — recomputed on every payload/preset change (client-side).
+  // Live capacity check — recomputed on every payload change (client-side).
   const exceeds = hasPayload && !!selectedPreset && payloadSize > maxBytes;
 
   const running = phase === "uploading" || phase === "calculating" || phase === "embedding";
-  const canEncode = !!cover && !analyzing && !!payloadType && hasPayload && !!tierId && !exceeds && !running && phase !== "done";
+  // A timed-out video probe keeps Encode enabled — the server re-verifies fit.
+  const canEncode = !!cover && !analyzing && !!payloadType && hasPayload && !running && phase !== "done" && (capacityTimedOut || (!!tierId && !exceeds));
 
   const runEncode = async () => {
-    if (!cover || !payloadType || !selectedPreset || !tierId || exceeds) return;
+    if (!cover || !payloadType || !hasPayload) return;
+    if (!capacityTimedOut && (!tierId || exceeds)) return;
     // Supersede any in-flight encode; a stale response cannot overwrite state.
     encodeAbort.current?.abort();
     const controller = new AbortController();
@@ -191,7 +181,7 @@ export default function EncodePage() {
           payloadType,
           payloadData: { text: payloadType === "text" ? message : undefined, file: payloadFile?.file, size: payloadSize },
           password,
-          preset,
+          preset: DEFAULT_UNIFIED_PRESET,
         },
         (p) => { if (encodeId.current === reqId) { setProgress(p); setPhase(p.stage); } },
         controller.signal,
@@ -220,7 +210,6 @@ export default function EncodePage() {
   const reset = () => {
     clearCover();
     setMessage(""); setPassword("");
-    setPreset(DEFAULT_UNIFIED_PRESET);
   };
 
   const downloadStego = () => {
@@ -265,16 +254,16 @@ export default function EncodePage() {
             previewTestId="preview-cover-encode"
           />
 
-          {/* 02 — Payload type (options depend on detected cover kind) */}
+          {/* 02 — Payload type (options derived client-side from cover kind) */}
           {cover && (
             <div className="step-block">
-              <div className="step-heading"><span className="step-number">02</span><div><h2>Choose the payload</h2><p>{analyzing ? "Detecting cover type…" : cover.kind === "video" ? "Video covers can hide text, files, or an image." : "Image covers can hide a text message or a text file."}</p></div></div>
-              {analyzing || !analysis || !payloadType ? (
+              <div className="step-heading"><span className="step-number">02</span><div><h2>Choose the payload</h2><p>{cover.kind === "video" ? "Video covers can hide text, files, or an image." : "Image covers can hide a text message or a text file."}</p></div></div>
+              {!payloadType ? (
                 <p className="capacity-empty" data-testid="payload-analyzing">Reading carrier metadata…</p>
               ) : (
                 <>
                   <RadioGroup className="option-grid" value={payloadType} onValueChange={(v) => changePayloadType(v as PayloadType)} data-testid="payload-type-group">
-                    {analysis.payloadTypes.map((type) => {
+                    {payloadTypes.map((type) => {
                       const Icon = PAYLOAD_ICON[type];
                       const selected = payloadType === type;
                       return (
@@ -318,44 +307,37 @@ export default function EncodePage() {
             </div>
           )}
 
-          {/* 04 — Preset (single axis: capacity vs. survivability trade-off) */}
+          {/* 04 — Preset (single: LOSSLESS) */}
           {cover && analysis && payloadType && (
             <div className="step-block">
-              <div className="step-heading"><span className="step-number">04</span><div><h2>Preset</h2><p>Each preset trades capacity for how well the payload survives re-compression.</p></div></div>
-              <RadioGroup className="option-grid" value={preset} onValueChange={(v) => changePreset(v as UnifiedPresetId)} data-testid="preset-group">
-                {UNIFIED_PRESETS.map((option) => {
-                  const selected = preset === option.id;
-                  const mappedTier = unifiedPresetToTierId(option.id, tierIds);
-                  const tier = mappedTier ? analysis.presets.find((p) => p.id === mappedTier) : null;
-                  const presetMax = tier && payloadType ? tier.maxBytesForPayload[payloadType] : 0;
-                  const over = hasPayload && payloadSize > presetMax;
-                  return (
-                    <div key={option.id} className={selected ? "option-card selected" : "option-card"} onClick={() => changePreset(option.id)} data-testid={`preset-${option.id}`}>
-                      <RadioGroupItem value={option.id} id={`preset-${option.id}`} aria-label={option.label} className="option-radio" />
-                      <div className="option-body">
-                        <span className="option-title">{option.label}{option.id === "LOCAL_HIGH_CAPACITY" && <b className="option-cap">MAX CAPACITY</b>}<b className={over ? "option-cap over" : "option-cap"} data-testid={`preset-cap-${option.id}`}>{formatBytes(presetMax)}</b></span>
-                        <span className="option-sub">{option.description}</span>
-                        {option.warnings.map((w) => (
-                          <span key={w} className="option-surv"><ShieldCheck size={11} /> {w}</span>
-                        ))}
-                        {tier && (
-                          <span className="option-ber">EST. BER AFTER COMPRESSION · {(tier.expectedBer * 100).toFixed(2)}%</span>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </RadioGroup>
-              {analyzing && <p className="capacity-empty" data-testid="preset-reanalyzing">Re-checking capacity for the {getUnifiedPresetLabel(preset)} preset…</p>}
+              <div className="step-heading"><span className="step-number">04</span><div><h2>Preset</h2><p>Lossless — maximum capacity with byte-exact extraction for local, LAN and direct file copies.</p></div></div>
+              <div className="option-card selected" data-testid="preset-LOSSLESS">
+                <div className="option-body">
+                  <span className="option-title">{getUnifiedPresetLabel(DEFAULT_UNIFIED_PRESET)}<b className="option-cap">MAX CAPACITY</b>{analyzing ? <span className="option-cap" data-testid={`preset-cap-${DEFAULT_UNIFIED_PRESET}`}>Checking…</span> : <b className={exceeds ? "option-cap over" : "option-cap"} data-testid={`preset-cap-${DEFAULT_UNIFIED_PRESET}`}>{formatBytes(maxBytes)}</b>}</span>
+                  <span className="option-sub">{UNIFIED_PRESETS[0].description}</span>
+                  {UNIFIED_PRESETS[0].warnings.map((w) => (
+                    <span key={w} className="option-surv"><ShieldCheck size={11} /> {w}</span>
+                  ))}
+                  {selectedPreset && (
+                    <span className="option-ber">EST. BER AFTER COMPRESSION · {(selectedPreset.expectedBer * 100).toFixed(2)}%</span>
+                  )}
+                </div>
+              </div>
 
               {/* 05 — Live capacity comparison → warning Alert, disables Encode */}
-              {hasPayload && selectedPreset && (
+              {capacityTimedOut ? (
+                <Alert className="tool-alert" data-testid="capacity-timeout">
+                  <TriangleAlert size={15} />
+                  <AlertTitle>Capacity check timed out</AlertTitle>
+                  <AlertDescription>The clip took too long to probe. You can still try to encode — the server re-verifies that the payload fits.</AlertDescription>
+                </Alert>
+              ) : hasPayload && selectedPreset && (
                 exceeds ? (
                   <Alert variant="destructive" className="tool-alert" data-testid="capacity-warning">
                     <TriangleAlert size={15} />
                     <AlertTitle>Payload exceeds capacity</AlertTitle>
                     <AlertDescription>
-                      {getPayloadTypeLabel(payloadType)} is {formatBytes(payloadSize)}, but the {selectedPreset.name} preset only fits {formatBytes(maxBytes)}. Pick a higher-capacity preset or a smaller payload.
+                      {getPayloadTypeLabel(payloadType)} is {formatBytes(payloadSize)}, but the {selectedPreset.name} preset only fits {formatBytes(maxBytes)}. Pick a smaller payload.
                     </AlertDescription>
                   </Alert>
                 ) : (
@@ -415,7 +397,7 @@ export default function EncodePage() {
               result={result}
               payloadType={payloadType}
               payloadSize={payloadSize}
-              preset={preset}
+              preset={DEFAULT_UNIFIED_PRESET}
               onDownload={downloadStego}
             />
           ) : (

@@ -3,10 +3,10 @@
 > Status: **structural support implemented**; numeric calibration **complete
 > (2026-08-08)**. **2026-08-09: consolidated** — the channel preset
 > (`NO_COMPRESSION | CHAT_STANDARD | CHAT_HD`) is no longer a separate API
-> knob; every unified preset (`LOCAL_HIGH_CAPACITY | CHAT_STANDARD | CHAT_HD`)
-> requests `deflate_if_smaller`, and the capacity TEXT_FILE multiplier is the
-> only remaining preset-dependent bit (1.0 for LOCAL, 1.35 for CHAT_*). See
-> `docs/UNIFIED_PRESETS.md` for the current API contract. This document keeps
+> knob; every unified preset (`LOSSLESS | CHAT_STANDARD | CHAT_HD`) requests
+> `deflate_if_smaller`, and the capacity TEXT_FILE multiplier is the only
+> remaining preset-dependent bit (1.0 for LOSSLESS, 1.35 for CHAT_*). See
+> `UNIFIED_PRESETS.md` for the current API contract. This document keeps
 > the calibration record.
 >
 > The backend exposes first-class, channel-level compression presets
@@ -81,7 +81,7 @@ through the preset abstraction, never a bare boolean.
   (1.0 for NO_COMPRESSION → no inflation); TEXT_MESSAGE is unchanged.
 - **API**: since 2026-08-09 the encode/capacity endpoints take a single
   `preset` field; the legacy `compression_preset` form/query field is still
-  accepted (`NO_COMPRESSION` maps to `LOCAL_HIGH_CAPACITY`, CHAT_* pass
+  accepted (`NO_COMPRESSION` maps to `LOSSLESS`, CHAT_* pass
   through) but loses to an explicit unified preset. The legacy `compress:
   bool` form field also still works and wins over the preset policy when sent
   explicitly. Every unified preset's own policy is `deflate_if_smaller`

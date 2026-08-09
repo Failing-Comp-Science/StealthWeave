@@ -8,8 +8,8 @@ The repository is organized to support an academic thesis structure:
 
 - **`.venv/`** — local Python virtual environment (Python 3.9) with all dependencies installed.
 - **`backend/`** — the actual working code: a `modules/` package containing every embedder and steganalysis routine, a FastAPI application scaffold (`app/` with `api/`, `core/`, `models/`, `services/` subpackages, currently empty), the dependency manifest `requirements.txt`, and a pytest test suite.
-- **`frontend/`** — empty; a planned web/UI layer.
-- **`docs/`** — empty; this document lives here.
+- **`frontend/`** — the current client-side app (see `AGENT_RULES.md` layout).
+- **`docs/`** — generated artifacts only (`HOW_IT_WORKS.pdf`, `generate_pdf.py`); all Markdown documentation lives at the repo root.
 - **`evaluation/`** — empty scaffold (`results/`, `test_corpus/`) for the evaluation chapter.
 - **`references/`** — reference implementations studied to inform this design.
 

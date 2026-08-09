@@ -31,10 +31,10 @@ test("no-compression encode -> decode round trip", async ({ page }) => {
   await page.getByTestId("input-secret-message").fill(SECRET);
   await expect(page.getByTestId("capacity-ok")).toBeVisible();
 
-  // 4. The single preset axis defaults to LOCAL_HIGH_CAPACITY; re-assert it is
-  //    selected. (The old carrier-preset and payload-compression controls were
-  //    folded into this one preset.)
-  await expect(page.getByTestId("preset-LOCAL_HIGH_CAPACITY")).toHaveClass(/selected/);
+  // 4. The single preset axis defaults to LOSSLESS; re-assert it is selected.
+  //    (The old carrier-preset, payload-compression and multi-preset controls
+  //    were folded into this one preset.)
+  await expect(page.getByTestId("preset-LOSSLESS")).toHaveClass(/selected/);
 
   // 5. Encode via the real backend, then verify the result panel reports the
   //    chosen preset AND the DEFLATE-if-smaller policy.
@@ -44,7 +44,7 @@ test("no-compression encode -> decode round trip", async ({ page }) => {
   
   // Expand the technical details panel to access preset/compression info
   await page.getByTestId("button-technical-details").click();
-  await expect(resultPanel).toContainText("Local / Pendrive — High Capacity");
+  await expect(resultPanel).toContainText("Lossless");
   await expect(resultPanel).toContainText("DEFLATE (IF SMALLER)");
 
   // Download the stego file via the download button (avoids Vite proxy body issue)

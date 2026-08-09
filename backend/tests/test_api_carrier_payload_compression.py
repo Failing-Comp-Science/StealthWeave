@@ -114,7 +114,7 @@ def test_image_carrier_default_applies_when_field_absent():
 
 
 def test_image_lossless_carrier_default_no_compression():
-    # lossless_high_capacity (alias of unified LOCAL_HIGH_CAPACITY): tiny
+    # lossless_high_capacity (alias of unified LOSSLESS): tiny
     # message that does not shrink under DEFLATE -> DEFLATE-if-smaller skips it.
     body = _encode_decode(
         "/api/stego/image/encode", _png(), "cover.png", "image/png",

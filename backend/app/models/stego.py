@@ -87,7 +87,7 @@ class PresetCapacity(BaseModel):
     factor 1.0).
 
     ``preset_id`` / ``preset_label`` (NEW) name the UNIFIED user-facing preset
-    this row corresponds to (LOCAL_HIGH_CAPACITY / CHAT_STANDARD / CHAT_HD) —
+    this row corresponds to (LOSSLESS / CHAT_STANDARD / CHAT_HD) —
     the single preset axis the frontend presents.
     """
     id: str
@@ -136,7 +136,7 @@ class CapacityResponse(BaseModel):
     cover_type: CoverType
     payload_type: PayloadType
     compression_preset: CompressionPreset
-    #: Unified user-facing preset axis (LOCAL_HIGH_CAPACITY | CHAT_STANDARD |
+    #: Unified user-facing preset axis (LOSSLESS | CHAT_STANDARD |
     #: CHAT_HD); None when the request used a legacy compression_preset only.
     preset: Optional[str] = None
     allowed_payload_types: List[PayloadType]

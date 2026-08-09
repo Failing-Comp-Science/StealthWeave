@@ -38,11 +38,11 @@ class TestRegistryInvariants:
     def test_all_three_presets_present_and_in_order(self):
         ids = [p.id for p in list_unified_presets()]
         assert ids == [
-            UnifiedPresetId.LOCAL_HIGH_CAPACITY,
+            UnifiedPresetId.LOSSLESS,
             UnifiedPresetId.CHAT_STANDARD,
             UnifiedPresetId.CHAT_HD,
         ]
-        assert DEFAULT_PRESET == UnifiedPresetId.LOCAL_HIGH_CAPACITY
+        assert DEFAULT_PRESET == UnifiedPresetId.LOSSLESS
         assert len(UNIFIED_PRESETS) == 3
         assert len(PRESET_ORDER) == 3
 
@@ -56,11 +56,11 @@ class TestRegistryInvariants:
             assert preset.bits_per_coefficient == 1
             assert preset.capacity_model_version == CAPACITY_MODEL_VERSION
             assert preset.direct_extraction_expected == (
-                preset.id == UnifiedPresetId.LOCAL_HIGH_CAPACITY
+                preset.id == UnifiedPresetId.LOSSLESS
             )
 
     def test_presets_monotonically_trade_capacity_for_robustness(self):
-        local = UNIFIED_PRESETS[UnifiedPresetId.LOCAL_HIGH_CAPACITY]
+        local = UNIFIED_PRESETS[UnifiedPresetId.LOSSLESS]
         chat_hd = UNIFIED_PRESETS[UnifiedPresetId.CHAT_HD]
         chat_std = UNIFIED_PRESETS[UnifiedPresetId.CHAT_STANDARD]
         # Local: lossless spatial LSB + QF95/CRF18; Chat HD: QF85/CRF23; Chat Std: QF75/CRF28.
@@ -69,7 +69,7 @@ class TestRegistryInvariants:
         assert local.image_derate >= chat_hd.image_derate >= chat_std.image_derate
 
     def test_ids_match_legacy_engine_tiers(self):
-        assert unified_to_engine_preset_id(UnifiedPresetId.LOCAL_HIGH_CAPACITY) == "light"
+        assert unified_to_engine_preset_id(UnifiedPresetId.LOSSLESS) == "light"
         assert unified_to_engine_preset_id(UnifiedPresetId.CHAT_HD) == "standard"
         assert unified_to_engine_preset_id(UnifiedPresetId.CHAT_STANDARD) == "heavy"
 
@@ -93,34 +93,37 @@ class TestResolution:
 
     def test_legacy_alias_resolution(self):
         assert get_unified_preset("chat_standard").id == UnifiedPresetId.CHAT_STANDARD
-        assert get_unified_preset("lossless_high_capacity").id == UnifiedPresetId.LOCAL_HIGH_CAPACITY
+        assert get_unified_preset("lossless_high_capacity").id == UnifiedPresetId.LOSSLESS
         assert get_unified_preset("chat_hd").id == UnifiedPresetId.CHAT_HD
-        assert get_unified_preset("no_compression").id == UnifiedPresetId.LOCAL_HIGH_CAPACITY
+        assert get_unified_preset("no_compression").id == UnifiedPresetId.LOSSLESS
         # case-insensitive
-        assert get_unified_preset("local_high_capacity").id == UnifiedPresetId.LOCAL_HIGH_CAPACITY
+        assert get_unified_preset("local_high_capacity").id == UnifiedPresetId.LOSSLESS
+        # the pre-rename canonical id is now a legacy alias too
+        assert get_unified_preset("LOCAL_HIGH_CAPACITY").id == UnifiedPresetId.LOSSLESS
 
     def test_is_unified_preset_token(self):
-        assert is_unified_preset_token("LOCAL_HIGH_CAPACITY")
+        assert is_unified_preset_token("LOSSLESS")
+        assert is_unified_preset_token("LOCAL_HIGH_CAPACITY") is False  # legacy alias, not unified
         assert is_unified_preset_token("lossless_high_capacity") is False  # legacy alias, not unified
         assert is_unified_preset_token("nonsense") is False
 
     def test_engine_selection_is_format_driven(self):
-        assert resolve_preset("LOCAL_HIGH_CAPACITY", "image", "png", "TEXT_MESSAGE").engine == "spatial_lsb"
-        assert resolve_preset("LOCAL_HIGH_CAPACITY", "image", "bmp", "TEXT_MESSAGE").engine == "spatial_lsb"
-        assert resolve_preset("LOCAL_HIGH_CAPACITY", "image", "jpeg", "TEXT_MESSAGE").engine == "jpeg_dct_qim"
-        assert resolve_preset("LOCAL_HIGH_CAPACITY", "image", "webp", "TEXT_MESSAGE").engine == "jpeg_dct_qim"
-        assert resolve_preset("LOCAL_HIGH_CAPACITY", "video", "mp4", "TEXT_FILE").engine == "video_iframe_dct_qim"
+        assert resolve_preset("LOSSLESS", "image", "png", "TEXT_MESSAGE").engine == "spatial_lsb"
+        assert resolve_preset("LOSSLESS", "image", "bmp", "TEXT_MESSAGE").engine == "spatial_lsb"
+        assert resolve_preset("LOSSLESS", "image", "jpeg", "TEXT_MESSAGE").engine == "jpeg_dct_qim"
+        assert resolve_preset("LOSSLESS", "image", "webp", "TEXT_MESSAGE").engine == "jpeg_dct_qim"
+        assert resolve_preset("LOSSLESS", "video", "mp4", "TEXT_FILE").engine == "video_iframe_dct_qim"
 
     def test_compression_requested_defaults_from_policy(self):
-        assert resolve_preset("LOCAL_HIGH_CAPACITY", "image", "png", "TEXT_MESSAGE").compression_requested is True
+        assert resolve_preset("LOSSLESS", "image", "png", "TEXT_MESSAGE").compression_requested is True
         # legacy override preserved for old clients
         assert (
-            resolve_preset("LOCAL_HIGH_CAPACITY", "image", "png", "TEXT_MESSAGE", compression_requested=False)
+            resolve_preset("LOSSLESS", "image", "png", "TEXT_MESSAGE", compression_requested=False)
             .compression_requested is False
         )
 
     def test_text_compression_factor_per_tier(self):
-        assert resolve_preset("LOCAL_HIGH_CAPACITY", "image", "jpeg", "TEXT_FILE").text_compression_factor == 1.0
+        assert resolve_preset("LOSSLESS", "image", "jpeg", "TEXT_FILE").text_compression_factor == 1.0
         assert resolve_preset("CHAT_STANDARD", "image", "jpeg", "TEXT_FILE").text_compression_factor == 1.35
         assert resolve_preset("CHAT_HD", "image", "jpeg", "TEXT_FILE").text_compression_factor == 1.35
 
@@ -128,17 +131,17 @@ class TestResolution:
         with pytest.raises(ValueError):
             resolve_preset("NOPE", "image", "jpeg", "TEXT_MESSAGE")
         with pytest.raises(ValueError):
-            resolve_preset("LOCAL_HIGH_CAPACITY", "audio", "mp3", "TEXT_MESSAGE")
+            resolve_preset("LOSSLESS", "audio", "mp3", "TEXT_MESSAGE")
         with pytest.raises(ValueError):
-            resolve_preset("LOCAL_HIGH_CAPACITY", "video", "png", "TEXT_MESSAGE")
+            resolve_preset("LOSSLESS", "video", "png", "TEXT_MESSAGE")
         with pytest.raises(ValueError):
-            resolve_preset("LOCAL_HIGH_CAPACITY", "image", "jpeg", "IMAGE")
+            resolve_preset("LOSSLESS", "image", "jpeg", "IMAGE")
 
 
 class TestLegacyQfCrfMapping:
     def test_qf_boundaries(self):
-        assert legacy_qf_to_unified(95) == UnifiedPresetId.LOCAL_HIGH_CAPACITY
-        assert legacy_qf_to_unified(90) == UnifiedPresetId.LOCAL_HIGH_CAPACITY
+        assert legacy_qf_to_unified(95) == UnifiedPresetId.LOSSLESS
+        assert legacy_qf_to_unified(90) == UnifiedPresetId.LOSSLESS
         assert legacy_qf_to_unified(89) == UnifiedPresetId.CHAT_HD
         assert legacy_qf_to_unified(85) == UnifiedPresetId.CHAT_HD
         assert legacy_qf_to_unified(80) == UnifiedPresetId.CHAT_HD
@@ -146,8 +149,8 @@ class TestLegacyQfCrfMapping:
         assert legacy_qf_to_unified(60) == UnifiedPresetId.CHAT_STANDARD
 
     def test_crf_boundaries(self):
-        assert legacy_crf_to_unified(18) == UnifiedPresetId.LOCAL_HIGH_CAPACITY
-        assert legacy_crf_to_unified(20) == UnifiedPresetId.LOCAL_HIGH_CAPACITY
+        assert legacy_crf_to_unified(18) == UnifiedPresetId.LOSSLESS
+        assert legacy_crf_to_unified(20) == UnifiedPresetId.LOSSLESS
         assert legacy_crf_to_unified(21) == UnifiedPresetId.CHAT_HD
         assert legacy_crf_to_unified(25) == UnifiedPresetId.CHAT_HD
         assert legacy_crf_to_unified(26) == UnifiedPresetId.CHAT_STANDARD
@@ -157,14 +160,14 @@ class TestLegacyQfCrfMapping:
         # the unified preset QF/CRF must match an existing engine preset tier
         qf_by_tier = {p.id: p.target_quality_factor for p in IMAGE_PRESETS}
         crf_by_tier = {p.id: p.target_crf for p in VIDEO_PRESETS}
-        assert unified_to_jpeg_qf(UnifiedPresetId.LOCAL_HIGH_CAPACITY) == qf_by_tier["light"]
+        assert unified_to_jpeg_qf(UnifiedPresetId.LOSSLESS) == qf_by_tier["light"]
         assert unified_to_jpeg_qf(UnifiedPresetId.CHAT_HD) == qf_by_tier["standard"]
         assert unified_to_jpeg_qf(UnifiedPresetId.CHAT_STANDARD) == qf_by_tier["heavy"]
-        assert unified_to_video_crf(UnifiedPresetId.LOCAL_HIGH_CAPACITY) == crf_by_tier["light"]
+        assert unified_to_video_crf(UnifiedPresetId.LOSSLESS) == crf_by_tier["light"]
         assert unified_to_video_crf(UnifiedPresetId.CHAT_HD) == crf_by_tier["standard"]
         assert unified_to_video_crf(UnifiedPresetId.CHAT_STANDARD) == crf_by_tier["heavy"]
 
     def test_qim_delta_matches_engine(self):
-        assert unified_to_qim_delta(UnifiedPresetId.LOCAL_HIGH_CAPACITY) == 2.0
+        assert unified_to_qim_delta(UnifiedPresetId.LOSSLESS) == 2.0
         assert unified_to_qim_delta(UnifiedPresetId.CHAT_HD) == 1.0
         assert unified_to_qim_delta(UnifiedPresetId.CHAT_STANDARD) == 1.0

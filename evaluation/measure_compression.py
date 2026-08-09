@@ -2,7 +2,7 @@
 """
 Measure real HSTG v2 container sizes and compression ratios per channel preset.
 
-This is the empirical-calibration companion to ``docs/COMPRESSION_PRESETS.md``.
+This is the empirical-calibration companion to ``COMPRESSION_PRESETS.md``.
 It measures, for every payload type (TEXT_MESSAGE / TEXT_FILE / IMAGE) x channel
 compression preset (NO_COMPRESSION / CHAT_STANDARD / CHAT_HD):
 

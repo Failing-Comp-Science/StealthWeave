@@ -14,10 +14,10 @@
  * (see `runEmbed`) so the real per-encode PSNR/SSIM/BER can be read from the
  * X-Stego-* response headers the generated client discards.
  *
- * Preset axis: the UI sends ONE `preset` field (LOCAL_HIGH_CAPACITY |
- * CHAT_STANDARD | CHAT_HD); the backend resolves it into the complete engine
- * configuration (QF/CRF, QIM delta, LSB depth, container tier, DEFLATE-if-
- * smaller compression policy). The legacy parameters (carrier_preset,
+ * Preset axis: the UI sends ONE `preset` field (LOSSLESS | CHAT_STANDARD |
+ * CHAT_HD); the backend resolves it into the complete engine configuration
+ * (QF/CRF, QIM delta, LSB depth, container tier, DEFLATE-if-smaller
+ * compression policy). The legacy parameters (carrier_preset,
  * payload_compression, compress, compression_preset) are no longer sent.
  * Decode reads the container's FLAG_COMPRESSED from the header and surfaces it
  * in `compressed`, so the UI can report "No Compression" / "Compressed".
@@ -96,7 +96,7 @@ export interface EncodeInput {
   payloadType: PayloadType;
   payloadData: { text?: string; file?: File; size: number };
   password: string;
-  /** Unified user-facing preset (LOCAL_HIGH_CAPACITY | CHAT_STANDARD | CHAT_HD). */
+  /** Unified user-facing preset (LOSSLESS | CHAT_STANDARD | CHAT_HD). */
   preset: UnifiedPresetId;
 }
 

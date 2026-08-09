@@ -54,9 +54,11 @@ paths:
           in: query
           required: false
           description: >
-            Unified user-facing preset (LOCAL_HIGH_CAPACITY | CHAT_STANDARD |
-            CHAT_HD). An explicitly sent legacy `compression_preset` wins over
-            it for old clients. Default: LOCAL_HIGH_CAPACITY.
+            Unified user-facing preset (LOSSLESS | CHAT_STANDARD | CHAT_HD).
+            An explicitly sent legacy `compression_preset` wins over it for old
+            clients. Legacy tokens (LOCAL_HIGH_CAPACITY, light/standard/heavy,
+            bare QF/CRF) are still accepted and resolve onto the unified axis.
+            Default: LOSSLESS.
           schema:
             $ref: "#/components/schemas/Preset"
         - name: compression_preset
@@ -118,8 +120,8 @@ paths:
                   default: TEXT_MESSAGE
                 preset:
                   type: string
-                  default: LOCAL_HIGH_CAPACITY
-                  description: Unified preset (LOCAL_HIGH_CAPACITY | CHAT_STANDARD | CHAT_HD); legacy tokens (light | standard | heavy, bare QF) still accepted
+                  default: LOSSLESS
+                  description: Unified preset (LOSSLESS | CHAT_STANDARD | CHAT_HD); legacy tokens (LOCAL_HIGH_CAPACITY, light | standard | heavy, bare QF) still accepted
                 password:
                   type: string
                   default: ""
@@ -223,8 +225,8 @@ paths:
                   default: TEXT_MESSAGE
                 preset:
                   type: string
-                  default: LOCAL_HIGH_CAPACITY
-                  description: Unified preset (LOCAL_HIGH_CAPACITY | CHAT_STANDARD | CHAT_HD); legacy tokens (light | standard | heavy, bare CRF) still accepted
+                  default: LOSSLESS
+                  description: Unified preset (LOSSLESS | CHAT_STANDARD | CHAT_HD); legacy tokens (LOCAL_HIGH_CAPACITY, light | standard | heavy, bare CRF) still accepted
                 password:
                   type: string
                   default: ""
@@ -318,7 +320,7 @@ components:
       enum: [NO_COMPRESSION, CHAT_STANDARD, CHAT_HD]
     Preset:
       type: string
-      enum: [LOCAL_HIGH_CAPACITY, CHAT_STANDARD, CHAT_HD]
+      enum: [LOSSLESS, CHAT_STANDARD, CHAT_HD]
     CoverType:
       type: string
       enum: [IMAGE, VIDEO]
@@ -364,7 +366,7 @@ components:
         preset_id:
           type: string
           nullable: true
-          description: Unified user-facing preset id of this row (LOCAL_HIGH_CAPACITY | CHAT_STANDARD | CHAT_HD)
+          description: Unified user-facing preset id of this row (LOSSLESS | CHAT_STANDARD | CHAT_HD)
         preset_label:
           type: string
           nullable: true

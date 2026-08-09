@@ -314,7 +314,7 @@ def test_empty_payload_roundtrip():
 
 
 def test_chat_container_never_larger_than_no_compression():
-    # Calibration companion (docs/COMPRESSION_PRESETS.md): for the SAME
+    # Calibration companion (COMPRESSION_PRESETS.md): for the SAME
     # payload, a CHAT_* container must never be larger than the
     # NO_COMPRESSION one -- DEFLATE is kept only when it actually shrinks, so
     # the capacity model's text_compression_factor (median 1.35) can never

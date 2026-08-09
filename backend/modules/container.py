@@ -100,7 +100,7 @@ class CompressionPresetId(enum.IntEnum):
 #: Empirical TEXT->DEFLATE multiplier (raw / deflated bytes) used by the
 #: capacity model for the CHAT_* presets. Value = **median** deflate ratio
 #: measured on the deterministic synthetic corpus by
-#: ``evaluation/measure_compression.py`` (see ``docs/COMPRESSION_PRESETS.md``):
+#: ``evaluation/measure_compression.py`` (see ``COMPRESSION_PRESETS.md``):
 #: 1.35 (median 1.347; p10 1.0, p90 49.9). Picked conservatively so the
 #: capacity model does not overstate capacity for typical text payloads --
 #: small payloads (which image covers actually carry) barely compress, while
@@ -130,7 +130,7 @@ class CompressionPreset(enum.Enum):
       DEFLATE (HSTG v2 keeps RS-ECC + AES-256-GCM in either case).
     * ``text_compression_factor``: placeholder TEXT->DEFLATE ratio used by the
       capacity model. **PLACEHOLDER — to be overwritten by empirical
-      measurement** on the synthetic corpus (docs/COMPRESSION_PRESETS.md); it is
+      measurement** on the synthetic corpus (COMPRESSION_PRESETS.md); it is
       NOT a validated physics constant.
     * ``label``: human-readable name for the API / frontend.
     """
@@ -145,7 +145,7 @@ class CompressionPreset(enum.Enum):
 
     @property
     def text_compression_factor(self) -> float:
-        # NOTE: placeholders pending empirical calibration (docs/COMPRESSION_PRESETS.md).
+        # NOTE: placeholders pending empirical calibration (COMPRESSION_PRESETS.md).
         # NO_COMPRESSION is exactly 1.0 (no DEFLATE) -- never multiply by 2.5x
         # for an uncompressed channel. CHAT_* keep the legacy 2.5x for now.
         if self is CompressionPreset.NO_COMPRESSION:

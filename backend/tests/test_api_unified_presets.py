@@ -1,7 +1,7 @@
 """
 Tests for the unified preset axis at the API boundary.
 
-The API now exposes ONE user-facing preset (``preset`` = LOCAL_HIGH_CAPACITY |
+The API now exposes ONE user-facing preset (``preset`` = LOSSLESS |
 CHAT_STANDARD | CHAT_HD). These tests pin:
 
   * the capacity endpoint's ``preset`` query echo + per-row unified mapping;
@@ -74,7 +74,7 @@ def _roundtrip_image(cover, filename, mime, **data):
 # Capacity endpoint: unified preset query
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("preset", ["LOCAL_HIGH_CAPACITY", "CHAT_STANDARD", "CHAT_HD"])
+@pytest.mark.parametrize("preset", ["LOSSLESS", "CHAT_STANDARD", "CHAT_HD"])
 def test_capacity_unified_preset_echoed(jpeg_bytes, preset):
     r = client.post(
         CAP_URL,
@@ -87,15 +87,43 @@ def test_capacity_unified_preset_echoed(jpeg_bytes, preset):
     # JPEG covers report all three engine tiers, each mapped onto a unified id.
     by_tier = {p["id"]: p for p in body["presets"]}
     assert set(by_tier) == {"light", "standard", "heavy"}
-    assert by_tier["light"]["preset_id"] == "LOCAL_HIGH_CAPACITY"
+    assert by_tier["light"]["preset_id"] == "LOSSLESS"
     assert by_tier["standard"]["preset_id"] == "CHAT_HD"
     assert by_tier["heavy"]["preset_id"] == "CHAT_STANDARD"
     assert all(p["preset_label"] for p in body["presets"])
 
 
+def test_capacity_lossless_is_maximum(jpeg_bytes):
+    # Phase 2.4: collapsing to the single LOSSLESS preset must not reduce what
+    # the UI shows — LOSSLESS (QF 95, derate 1.0) advertises >= every legacy
+    # chat tier for a JPEG cover.
+    r = client.post(
+        CAP_URL,
+        params={"payload_type": "TEXT_MESSAGE", "preset": "LOSSLESS"},
+        files={"cover": ("cover.jpg", jpeg_bytes, "image/jpeg")},
+    )
+    assert r.status_code == 200, r.text
+    by_tier = {p["id"]: p for p in r.json()["presets"]}
+    lossless = by_tier["light"]["max_bytes_text_message"]
+    assert lossless >= by_tier["standard"]["max_bytes_text_message"]
+    assert lossless >= by_tier["heavy"]["max_bytes_text_message"]
+
+
+def test_capacity_pre_rename_alias_still_accepted(jpeg_bytes):
+    # Old clients sending the pre-rename id LOCAL_HIGH_CAPACITY keep working and
+    # are echoed under the new canonical id.
+    r = client.post(
+        CAP_URL,
+        params={"payload_type": "TEXT_MESSAGE", "preset": "LOCAL_HIGH_CAPACITY"},
+        files={"cover": ("cover.jpg", jpeg_bytes, "image/jpeg")},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["preset"] == "LOSSLESS"
+
+
 def test_capacity_unified_preset_changes_text_factor(jpeg_bytes):
     # CHAT_STANDARD -> the empirical DEFLATE ratio applies to TEXT_FILE rows;
-    # LOCAL_HIGH_CAPACITY -> conservative 1.0 (exact container measured later).
+    # LOSSLESS -> conservative 1.0 (exact container measured later).
     r_chat = client.post(
         CAP_URL,
         params={"payload_type": "TEXT_FILE", "preset": "CHAT_STANDARD"},
@@ -103,7 +131,7 @@ def test_capacity_unified_preset_changes_text_factor(jpeg_bytes):
     )
     r_local = client.post(
         CAP_URL,
-        params={"payload_type": "TEXT_FILE", "preset": "LOCAL_HIGH_CAPACITY"},
+        params={"payload_type": "TEXT_FILE", "preset": "LOSSLESS"},
         files={"cover": ("cover.jpg", jpeg_bytes, "image/jpeg")},
     )
     assert r_chat.status_code == r_local.status_code == 200
@@ -123,13 +151,13 @@ def test_capacity_png_spatial_row_maps_to_local(png_bytes):
     assert r.status_code == 200, r.text
     (row,) = r.json()["presets"]
     assert row["id"] == "lossless_high_capacity"
-    assert row["preset_id"] == "LOCAL_HIGH_CAPACITY"
-    assert row["preset_label"] == "Local / Pendrive — High Capacity"
+    assert row["preset_id"] == "LOSSLESS"
+    assert row["preset_label"] == "Lossless"
 
 
 def test_capacity_legacy_compression_preset_still_wins_when_explicit(jpeg_bytes):
     # Explicit legacy compression_preset keeps legacy semantics (documented
-    # compatibility) even though the unified default is LOCAL_HIGH_CAPACITY.
+    # compatibility) even though the unified default is LOSSLESS.
     r = client.post(
         CAP_URL,
         params={"payload_type": "TEXT_FILE", "compression_preset": "CHAT_HD"},
@@ -147,7 +175,7 @@ def test_capacity_legacy_compression_preset_still_wins_when_explicit(jpeg_bytes)
 # Encode endpoint: unified preset axis + precedence
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("preset", ["LOCAL_HIGH_CAPACITY", "CHAT_STANDARD", "CHAT_HD"])
+@pytest.mark.parametrize("preset", ["LOSSLESS", "CHAT_STANDARD", "CHAT_HD"])
 def test_image_roundtrip_explicit_unified_preset(preset):
     # CHAT_STANDARD (QF 75) derates carriers hardest; use a larger cover so the
     # test payload still fits all three presets.
@@ -160,23 +188,23 @@ def test_unified_preset_wins_over_legacy_carrier_axis():
     # Explicit unified preset beats the legacy carrier_preset axis.
     body = _roundtrip_image(
         _jpeg(), "cover.jpg", "image/jpeg",
-        preset="LOCAL_HIGH_CAPACITY", carrier_preset="chat_hd",
+        preset="LOSSLESS", carrier_preset="chat_hd",
     )
     assert body["message"] == TEXT
 
 
 def test_unified_preset_compression_policy(video_cover_bytes):
-    # LOCAL_HIGH_CAPACITY -> CRF 18 + DEFLATE-if-smaller; the header echoes the
+    # LOSSLESS -> CRF 18 + DEFLATE-if-smaller; the header echoes the
     # unified preset id.
     r = client.post(
         ENCODE_URL,
         data={"payload_type": "TEXT_MESSAGE", "message": TEXT_COMPRESSIBLE,
-              "preset": "LOCAL_HIGH_CAPACITY"},
+              "preset": "LOSSLESS"},
         files={"cover": ("cover.mp4", video_cover_bytes, "video/mp4")},
     )
     assert r.status_code == 200, r.text
     assert r.headers["X-Stego-CRF"] == "18"
-    assert r.headers["X-Stego-Preset"] == "LOCAL_HIGH_CAPACITY"
+    assert r.headers["X-Stego-Preset"] == "LOSSLESS"
 
 
 def test_video_unified_precedence_over_legacy_carrier(video_cover_bytes):

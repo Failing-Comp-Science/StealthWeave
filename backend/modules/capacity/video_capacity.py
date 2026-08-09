@@ -225,7 +225,7 @@ def video_capacity(
     )
     # NOTE (calibrated 2026-08-08): ``text_compression_factor`` is now the
     # empirically measured TEXT_FILE DEFLATE ratio (median 1.35 on the
-    # deterministic synthetic corpus; see docs/COMPRESSION_PRESETS.md). The
+    # deterministic synthetic corpus; see COMPRESSION_PRESETS.md). The
     # rate model multiplies ``coded_per_min`` directly, so the float factor
     # is used as-is (no integer truncation).
     text_factor = compression_preset.text_compression_factor
