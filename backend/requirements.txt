@@ -16,6 +16,13 @@ alembic==1.13.1
 # Image Processing
 numpy==1.26.3
 Pillow==10.2.0
+# OpenCV is used ONLY as a fallback video prober in
+# modules/capacity/video_capacity._require_cv2 and is imported LAZILY there.
+# Never import cv2 at module top-level in the video path: cv2 and PyAV each
+# bundle their own FFmpeg (libavdevice), and loading cv2 before PyAV triggers a
+# dual-libavdevice objc collision ("Class AVFFrameReceiver is implemented in
+# both ...") that can crash the audio/video pipeline. Tested against
+# opencv-python 4.9.0.80 (CI) and tolerant of 5.0.x locally.
 opencv-python==4.9.0.80
 scipy==1.12.0
 scikit-image==0.22.0
@@ -30,7 +37,9 @@ imageio==2.33.1
 imageio-ffmpeg==0.4.9
 # PyAV: bundles a full ffmpeg (with libx264) for frame-level I-frame detection
 # and CRF re-encoding in modules/video_stego (audit §7.3). Pinned to a release
-# with Python 3.9 wheels; 14.x+ dropped cp39 support.
+# with Python 3.9 wheels; 14.x+ dropped cp39 support. This is the SINGLE
+# consistent media-processing stack for the video path (see the OpenCV note
+# above). GET /api/healthz/media reports the linked libav* build.
 av==13.1.0
 
 # Deep Learning (for VideoSeal and GBRAS-Net)

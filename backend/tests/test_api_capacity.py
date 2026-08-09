@@ -40,6 +40,15 @@ def png_bytes():
 
 
 @pytest.fixture(scope="module")
+def jpeg_bytes():
+    rng = np.random.default_rng(0)
+    arr = rng.integers(0, 256, (256, 256, 3), dtype=np.uint8)
+    buf = io.BytesIO()
+    Image.fromarray(arr).save(buf, format="JPEG", quality=90)
+    return buf.getvalue()
+
+
+@pytest.fixture(scope="module")
 def mp4_bytes():
     cv2 = pytest.importorskip("cv2")
     rng = np.random.default_rng(1)
@@ -81,15 +90,19 @@ def test_image_cover_valid_payloads(png_bytes, payload_type):
     assert body["payload_type"] == payload_type
     assert body["container_version"] == 2
     assert body["compression_preset"] == "NO_COMPRESSION"
-    # >=3 presets in a single call (task step 4/5).
-    assert len(body["presets"]) >= 3
-    assert {p["id"] for p in body["presets"]} == {"light", "standard", "heavy"}
+    # PNG covers ride the lossless spatial (LSB) engine: a single LOSSLESS
+    # preset with real (large) spatial capacity, not the JPEG DCT presets.
+    assert len(body["presets"]) >= 1
+    assert {p["id"] for p in body["presets"]} == {"lossless_high_capacity"}
     for p in body["presets"]:
         assert p["target_quality_factor"] is not None
         assert p["max_bytes_text_message"] is not None
         assert "expected_ber" in p and "technique" in p
         assert p["compression_preset"] == "no_compression"
         assert p["text_compression_factor"] == 1.0
+        # The spatial model reports the full LSB budget, not the ~hundreds of
+        # bytes the JPEG model would claim for the same cover.
+        assert p["max_bytes_text_message"] > 10_000
 
 
 @pytest.mark.parametrize("preset", ["CHAT_STANDARD", "CHAT_HD", "NO_COMPRESSION"])
@@ -106,6 +119,24 @@ def test_capacity_compression_preset_query_echoed(png_bytes, preset):
     for p in body["presets"]:
         assert p["compression_preset"] == preset.lower()
         assert p["text_compression_factor"] == expected_factor
+
+
+@pytest.mark.parametrize("payload_type", ["TEXT_MESSAGE", "TEXT_FILE"])
+def test_jpeg_cover_still_returns_dct_presets(jpeg_bytes, payload_type):
+    # JPEG covers keep the block DCT-QIM model: all three carrier presets.
+    r = client.post(
+        URL, params={"payload_type": payload_type},
+        files={"cover": ("cover.jpg", jpeg_bytes, "image/jpeg")},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["cover_type"] == "IMAGE"
+    assert len(body["presets"]) == 3
+    assert {p["id"] for p in body["presets"]} == {"light", "standard", "heavy"}
+    for p in body["presets"]:
+        assert p["target_quality_factor"] is not None
+        assert p["max_bytes_text_message"] is not None
+        assert p["compression_preset"] == "no_compression"
 
 
 def test_capacity_unknown_compression_preset_422(png_bytes):

@@ -18,6 +18,61 @@ from .presets import TAU_TEXTURE
 
 _BLOCK = 8
 
+#: Video-engine mid-band carrier rule (mirrors ``modules.video_stego.engine``):
+#: a block is a usable carrier when at least ``MIN_AC_MID`` mid-band AC
+#: coefficients of its raw (un-quantized) DCT exceed ``TINY``. The band is the
+#: zigzag positions ``[ZMIN, ZMAX)`` used by the engine; capacity is computed
+#: from the RAW DCT, never a JPEG-style quantization table, because the video
+#: embedder snaps mid-band magnitudes before H.264 re-quantization rather than
+#: inheriting a quantized coefficient grid.
+ZMIN, ZMAX = 3, 29
+MIN_AC_MID = 3
+TINY = 1e-3
+
+
+def _zigzag_order() -> np.ndarray:
+    """JPEG zig-zag scan order of the 8x8 block; index 0 is the DC."""
+    order = []
+    for s in range(15):
+        if s % 2 == 0:
+            i, j = min(s, 7), s - min(s, 7)
+            while i >= 0 and j <= 7:
+                order.append((i, j))
+                i, j = i - 1, j + 1
+        else:
+            j, i = min(s, 7), s - min(s, 7)
+            while j >= 0 and i <= 7:
+                order.append((i, j))
+                i, j = i + 1, j - 1
+    mask = np.zeros((_BLOCK, _BLOCK), dtype=bool)
+    for _k, (_u, _v) in enumerate(order[ZMIN:ZMAX]):
+        mask[_u, _v] = True
+    return mask
+
+
+_MID_MASK = _zigzag_order()
+
+
+def count_mid_usable_blocks(luma: np.ndarray) -> int:
+    """Blocks of __luma__ usable as H.264 I-frame DCT-QIM carriers.
+
+    Mirrors ``modules.video_stego.engine._count_eligible``: counts the 8x8
+    blocks whose raw (un-quantized) DCT keeps at least ``MIN_AC_MID`` mid-band
+    coefficients above ``TINY``. The count is CRF-independent -- the carrier
+    pool is decided by cover geometry, not by the preset's quantizer -- which
+    is exactly why calibration reports ``0`` carriers at standard/heavy for
+    the old JPEG-QF-bridged model while the engine's measured embed ceiling is
+    preset-independent.
+    """
+    h, w = luma.shape
+    nby, nbx = h // _BLOCK, w // _BLOCK
+    if nby == 0 or nbx == 0:
+        return 0
+    coeffs = _blockwise_dct2(luma)
+    mid = np.abs(coeffs) * _MID_MASK[None, :, None, :]
+    n_mid = np.count_nonzero(mid > TINY, axis=(1, 3))  # (nby, nbx)
+    return int(np.count_nonzero(n_mid >= MIN_AC_MID))
+
 
 def rgb_to_luma(rgb: np.ndarray) -> np.ndarray:
     """BT.601 luma (Y') from an HxWx3 uint8 RGB array."""

@@ -4,6 +4,9 @@ Pydantic models for the stego API (request validation + OpenAPI schema).
 Payload-type enum matches the HSTG v2 container (``modules.container.PayloadType``):
 TEXT_MESSAGE, TEXT_FILE, IMAGE. Cover type is derived server-side from the
 uploaded file.
+
+Carrier presets (NEW in Stage 2) are the first-class axis governing carrier
+capacity and transfer semantics, independent of payload compression.
 """
 from __future__ import annotations
 
@@ -28,12 +31,34 @@ class CompressionPreset(str, Enum):
     """Channel-level compression presets exposed by the API.
 
     Mirrors ``modules.container.CompressionPreset`` (NO_COMPRESSION /
-    CHAT_STANDARD / CHAT_HD). The container's per-carrier `CompressionPresetId`
-    (light/standard/heavy) is a separate, orthogonal axis.
+    CHAT_STANDARD / CHAT_HD). This is the PAYLOAD compression axis.
     """
     NO_COMPRESSION = "NO_COMPRESSION"
     CHAT_STANDARD = "CHAT_STANDARD"
     CHAT_HD = "CHAT_HD"
+
+
+class CarrierPreset(str, Enum):
+    """Carrier-level presets governing capacity and transfer semantics (Stage 2).
+
+    Independent of payload compression. These are the first-class carrier presets:
+    - CHAT_STANDARD: WhatsApp/Messenger default upload (survives aggressive re-encode)
+    - CHAT_HD: WhatsApp/Messenger HD toggle (survives moderate re-encode)
+    - LOSSLESS_HIGH_CAPACITY: Pendrive/LAN/disk transfer (direct extraction only)
+    """
+    CHAT_STANDARD = "chat_standard"
+    CHAT_HD = "chat_hd"
+    LOSSLESS_HIGH_CAPACITY = "lossless_high_capacity"
+
+
+class PayloadCompression(str, Enum):
+    """Payload compression mode (independent of carrier preset).
+
+    NO_COMPRESSION: Raw payload -> RS-ECC -> AES-GCM (no DEFLATE)
+    DEFLATE: Payload -> DEFLATE -> RS-ECC -> AES-GCM
+    """
+    NO_COMPRESSION = "NO_COMPRESSION"
+    DEFLATE = "DEFLATE"
 
 
 # Restricted cover/payload matrix enforced at the API layer (task step 5).
@@ -95,6 +120,9 @@ class PresetCapacity(BaseModel):
     fps: Optional[float] = None
     duration_sec: Optional[float] = None
 
+    # Itemized accounting breakdown (NEW in Stage 2)
+    accounting: Optional[dict] = None
+
 
 class CapacityResponse(BaseModel):
     cover_type: CoverType
@@ -117,4 +145,60 @@ class DecodeResponse(BaseModel):
 
 
 class ErrorResponse(BaseModel):
+    """Structured API error.
+
+    ``code`` is a stable, machine-readable token (see :class:`StegoErrorCode`)
+    the frontend can branch on; ``detail`` is the human-readable message.
+    ``detail`` alone is kept for backward compatibility with older clients that
+    only read ``detail`` (FastAPI's default 400 shape).
+    """
     detail: str
+    code: Optional[str] = None
+
+
+class StegoErrorCode(str, Enum):
+    """Stable error codes surfaced by the stego endpoints (task Phase 2C).
+
+    Grouped by stage so the frontend can decide whether an error is a
+    user-recoverable validation problem (bad file / too large) or an
+    engine/environment failure.
+    """
+    # --- cover / input validation ---
+    COVER_TYPE_UNSUPPORTED = "COVER_TYPE_UNSUPPORTED"
+    PAYLOAD_TYPE_INVALID = "PAYLOAD_TYPE_INVALID"
+    PAYLOAD_COMBO_INVALID = "PAYLOAD_COMBO_INVALID"
+    PRESET_INVALID = "PRESET_INVALID"
+    UPLOAD_EMPTY = "UPLOAD_EMPTY"
+    UPLOAD_TOO_LARGE = "UPLOAD_TOO_LARGE"
+
+    # --- payload assembly ---
+    PAYLOAD_MISSING = "PAYLOAD_MISSING"
+    PAYLOAD_TOO_LARGE = "PAYLOAD_TOO_LARGE"
+
+    # --- image ---
+    IMAGE_FILE_EMPTY = "IMAGE_FILE_EMPTY"
+    IMAGE_FORMAT_UNSUPPORTED = "IMAGE_FORMAT_UNSUPPORTED"
+    IMAGE_DECODE_FAILED = "IMAGE_DECODE_FAILED"
+    IMAGE_CAPACITY_EXCEEDED = "IMAGE_CAPACITY_EXCEEDED"
+    IMAGE_EMBED_FAILED = "IMAGE_EMBED_FAILED"
+    IMAGE_NO_PAYLOAD_FOUND = "IMAGE_NO_PAYLOAD_FOUND"
+
+    # --- video ---
+    VIDEO_FILE_EMPTY = "VIDEO_FILE_EMPTY"
+    VIDEO_FORMAT_UNSUPPORTED = "VIDEO_FORMAT_UNSUPPORTED"
+    VIDEO_CODEC_UNSUPPORTED = "VIDEO_CODEC_UNSUPPORTED"
+    VIDEO_PROBE_FAILED = "VIDEO_PROBE_FAILED"
+    VIDEO_NO_USABLE_FRAMES = "VIDEO_NO_USABLE_FRAMES"
+    VIDEO_NO_I_FRAMES = "VIDEO_NO_I_FRAMES"
+    VIDEO_CAPACITY_EXCEEDED = "VIDEO_CAPACITY_EXCEEDED"
+    VIDEO_PAYLOAD_TOO_LARGE = "VIDEO_PAYLOAD_TOO_LARGE"
+    VIDEO_EMBED_FAILED = "VIDEO_EMBED_FAILED"
+    VIDEO_OUTPUT_ENCODE_FAILED = "VIDEO_OUTPUT_ENCODE_FAILED"
+    VIDEO_TEMPFILE_FAILED = "VIDEO_TEMPFILE_FAILED"
+
+    # --- decode / recovery ---
+    DECODE_NO_PAYLOAD = "DECODE_NO_PAYLOAD"
+    DECODE_RECOVERY_FAILED = "DECODE_RECOVERY_FAILED"
+
+    # --- catch-all ---
+    INTERNAL_ERROR = "INTERNAL_ERROR"

@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowRight, Check, Download, FileImage, FileText,
   LockKeyhole, MessageSquareLock, Plus, ShieldCheck, TriangleAlert, X, Archive,
@@ -11,10 +11,10 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { toast } from "@/hooks/use-toast";
 import { formatBytes, formatDuration } from "@/lib/format";
-import { CHANNEL_COMPRESSION_OPTIONS, getChannelPresetLabel, getPayloadTypeLabel } from "@/lib/encode-decode-mock";
-import type { ChannelCompressionPreset, CompressionPreset, EmbedProgress, EmbedResult, PayloadType } from "@/lib/encode-decode-mock";
+import { CARRIER_PRESETS, carrierPresetToTierId, getCarrierPresetLabel, getPayloadCompressionLabel, getPayloadTypeLabel } from "@/lib/encode-decode-mock";
+import type { ChannelCompressionPreset, CompressionPreset, EmbedProgress, EmbedResult, PayloadCompression, PayloadType } from "@/lib/encode-decode-mock";
 import { analyzeCover, CapacityError } from "@/lib/capacity-api";
-import { runEmbed, StegoApiError } from "@/lib/stego-api";
+import { runEmbed, StegoApiError, type EncodeResult as StegoEncodeResult } from "@/lib/stego-api";
 
 const MAX_MESSAGE = 4000;
 
@@ -37,34 +37,57 @@ export default function EncodePage() {
   const [payloadType, setPayloadType] = useState<PayloadType | null>(null);
   const [message, setMessage] = useState("");
   const [payloadFile, setPayloadFile] = useState<DropFile | null>(null);
-  const [presetId, setPresetId] = useState<string>("");
+  const [carrierPreset, setCarrierPreset] = useState("chat_hd");
+  const [payloadCompression, setPayloadCompression] = useState<PayloadCompression>("NO_COMPRESSION");
+  const payloadCompressionTouched = useRef(false);
   const [password, setPassword] = useState("");
-  const [channelPreset, setChannelPreset] = useState<ChannelCompressionPreset>("NO_COMPRESSION");
   const [phase, setPhase] = useState<EmbedProgress["stage"]>("idle");
   const [progress, setProgress] = useState<EmbedProgress | null>(null);
-  const [result, setResult] = useState<EmbedResult | null>(null);
+  const [result, setResult] = useState<StegoEncodeResult | null>(null);
   const [error, setError] = useState("");
+  const [errorCode, setErrorCode] = useState<string | null>(null);
   const analyzeId = useRef(0);
+  const encodeId = useRef(0);
+  const encodeAbort = useRef<AbortController | null>(null);
+  // Latest object URLs, tracked so an unmount can revoke them without stale closures.
+  const urlsRef = useRef<{ cover?: string; payload?: string }>({});
+  urlsRef.current = { cover: cover?.url, payload: payloadFile?.url };
+
+  // Abort any in-flight encode and revoke object URLs when the page unmounts.
+  useEffect(() => {
+    return () => {
+      encodeAbort.current?.abort();
+      if (urlsRef.current.cover) URL.revokeObjectURL(urlsRef.current.cover);
+      if (urlsRef.current.payload) URL.revokeObjectURL(urlsRef.current.payload);
+    };
+  }, []);
 
   // --- Cover selection → real /api/stego/capacity (presets + allowed payloads) ---
   const selectCover = (file: DropFile) => {
+    // A new cover invalidates any in-flight encode and all prior results.
+    encodeAbort.current?.abort();
+    encodeId.current += 1;
     setCover((prev) => { if (prev) URL.revokeObjectURL(prev.url); return file; });
     setAnalysis(null);
     setPayloadType(null);
-    setPresetId("");
     setPayloadFile((prev) => { if (prev) URL.revokeObjectURL(prev.url); return null; });
     setResult(null);
     setPhase("idle");
     setProgress(null);
     setError("");
+    setErrorCode(null);
     setAnalyzing(true);
     const id = ++analyzeId.current;
-    analyzeCover(file, channelPreset)
+    analyzeCover(file, payloadCompression === "DEFLATE" ? "CHAT_STANDARD" : "NO_COMPRESSION")
       .then((res) => {
         if (analyzeId.current !== id) return;
         setAnalysis({ presets: res.presets, payloadTypes: res.payloadTypes });
         setPayloadType(res.payloadTypes[0] ?? "text");
-        setPresetId(res.presets[1]?.id ?? res.presets[0]?.id ?? "");
+        // Keep the chosen carrier preset when the new cover supports it
+        // (a PNG/BMP cover maps every carrier onto its lossless spatial tier).
+        setCarrierPreset((prev) =>
+          carrierPresetToTierId(prev, res.presets.map((p) => p.id)) ? prev : "chat_hd",
+        );
         setAnalyzing(false);
       })
       .catch((err) => {
@@ -76,11 +99,20 @@ export default function EncodePage() {
       });
   };
 
+  const rejectFile = (reason: string) => {
+    setError(reason);
+    setErrorCode("FILE_REJECTED");
+    toast({ variant: "destructive", title: "Unsupported file", description: reason });
+  };
+
   const clearCover = () => {
+    encodeAbort.current?.abort();
+    encodeId.current += 1;
     if (cover) URL.revokeObjectURL(cover.url);
     if (payloadFile) URL.revokeObjectURL(payloadFile.url);
     setCover(null); setAnalysis(null); setAnalyzing(false); setPayloadType(null);
-    setPresetId(""); setPayloadFile(null); setResult(null); setPhase("idle"); setProgress(null); setError("");
+    setPayloadFile(null); setResult(null); setPhase("idle"); setProgress(null);
+    setError(""); setErrorCode(null);
   };
 
   const changePayloadType = (next: PayloadType) => {
@@ -90,31 +122,24 @@ export default function EncodePage() {
     setResult(null);
     setPhase("idle");
     setError("");
+    setErrorCode(null);
   };
 
   const selectPayloadFile = (file: DropFile) => {
     setPayloadFile((prev) => { if (prev) URL.revokeObjectURL(prev.url); return file; });
-    setResult(null); setPhase("idle"); setError("");
+    setResult(null); setPhase("idle"); setError(""); setErrorCode(null);
   };
   const clearPayloadFile = () => { if (payloadFile) URL.revokeObjectURL(payloadFile.url); setPayloadFile(null); };
 
-  // --- Channel compression preset → re-fetch preset-aware capacity ----------
-  const changeChannelPreset = (next: ChannelCompressionPreset) => {
-    if (next === channelPreset) return;
-    setChannelPreset(next);
-    setResult(null);
-    setPhase("idle");
-    setError("");
+  // --- Payload compression → re-fetch preset-aware capacity -----------------
+  const refetchCapacity = (comp: ChannelCompressionPreset) => {
     if (!cover || analyzing) return;
     setAnalyzing(true);
     const id = ++analyzeId.current;
-    analyzeCover(cover, next)
+    analyzeCover(cover, comp)
       .then((res) => {
         if (analyzeId.current !== id) return;
         setAnalysis({ presets: res.presets, payloadTypes: res.payloadTypes });
-        setPresetId((prev) =>
-          res.presets.some((p) => p.id === prev) ? prev : (res.presets[1]?.id ?? res.presets[0]?.id ?? ""),
-        );
         setAnalyzing(false);
       })
       .catch((err) => {
@@ -126,6 +151,36 @@ export default function EncodePage() {
       });
   };
 
+  const changePayloadCompression = (next: PayloadCompression) => {
+    if (next === payloadCompression) return;
+    payloadCompressionTouched.current = true;
+    setPayloadCompression(next);
+    setResult(null);
+    setPhase("idle");
+    setError("");
+    setErrorCode(null);
+    refetchCapacity(next === "DEFLATE" ? "CHAT_STANDARD" : "NO_COMPRESSION");
+  };
+
+  // --- Carrier preset → re-select tier; sync payload compression default ----
+  const changeCarrierPreset = (next: string) => {
+    if (next === carrierPreset) return;
+    setCarrierPreset(next);
+    setResult(null);
+    setPhase("idle");
+    setError("");
+    setErrorCode(null);
+    // Until the user picks a payload-compression mode manually, follow the
+    // carrier preset's preferred default (e.g. chat carriers default DEFLATE).
+    if (!payloadCompressionTouched.current) {
+      const preset = CARRIER_PRESETS.find((p) => p.id === next);
+      if (preset && preset.payloadCompressionDefault !== payloadCompression) {
+        setPayloadCompression(preset.payloadCompressionDefault);
+        refetchCapacity(preset.payloadCompressionDefault === "DEFLATE" ? "CHAT_STANDARD" : "NO_COMPRESSION");
+      }
+    }
+  };
+
   // --- Derived state -------------------------------------------------------
   const payloadSize = useMemo(() => {
     if (payloadType === "text") return new TextEncoder().encode(message).length;
@@ -133,18 +188,26 @@ export default function EncodePage() {
   }, [payloadType, message, payloadFile]);
 
   const hasPayload = payloadType === "text" ? message.trim().length > 0 : payloadFile != null;
-  const compress = channelPreset !== "NO_COMPRESSION";
-  const selectedPreset = analysis?.presets.find((p) => p.id === presetId) ?? null;
+  const channelPreset: ChannelCompressionPreset = payloadCompression === "DEFLATE" ? "CHAT_STANDARD" : "NO_COMPRESSION";
+  const compress = payloadCompression === "DEFLATE";
+  const tierIds = analysis?.presets.map((p) => p.id) ?? [];
+  const tierId = carrierPresetToTierId(carrierPreset, tierIds);
+  const selectedPreset = (tierId && analysis?.presets.find((p) => p.id === tierId)) ?? null;
   const maxBytes = selectedPreset && payloadType ? selectedPreset.maxBytesForPayload[payloadType] : 0;
   // Live capacity check — recomputed on every payload/preset change (client-side).
   const exceeds = hasPayload && !!selectedPreset && payloadSize > maxBytes;
 
   const running = phase === "uploading" || phase === "calculating" || phase === "embedding";
-  const canEncode = !!cover && !analyzing && !!payloadType && hasPayload && !!presetId && !exceeds && !running && phase !== "done";
+  const canEncode = !!cover && !analyzing && !!payloadType && hasPayload && !!tierId && !exceeds && !running && phase !== "done";
 
   const runEncode = async () => {
-    if (!cover || !payloadType || !selectedPreset || exceeds) return;
-    setPhase("uploading"); setProgress(null); setResult(null); setError("");
+    if (!cover || !payloadType || !selectedPreset || !tierId || exceeds) return;
+    // Supersede any in-flight encode; a stale response cannot overwrite state.
+    encodeAbort.current?.abort();
+    const controller = new AbortController();
+    encodeAbort.current = controller;
+    const reqId = ++encodeId.current;
+    setPhase("uploading"); setProgress(null); setResult(null); setError(""); setErrorCode(null);
     try {
       const res = await runEmbed(
         {
@@ -152,31 +215,47 @@ export default function EncodePage() {
           payloadType,
           payloadData: { text: payloadType === "text" ? message : undefined, file: payloadFile?.file, size: payloadSize },
           password,
-          presetId,
+          presetId: tierId,
           compress,
           channelPreset,
+          carrierPreset,
+          payloadCompression,
         },
-        (p) => { setProgress(p); setPhase(p.stage); },
+        (p) => { if (encodeId.current === reqId) { setProgress(p); setPhase(p.stage); } },
+        controller.signal,
       );
+      if (encodeId.current !== reqId) return; // a newer request won — drop this result
       setResult(res);
       setPhase("done");
       toast({ title: "Embed complete", description: `${res.fileName} is ready to download.` });
     } catch (err) {
+      // Ignore aborts (a newer request or a reset superseded this one).
+      if (err instanceof StegoApiError && err.code === "ABORTED") return;
+      if (encodeId.current !== reqId) return;
+      // Clear stale success/preview/metrics state on failure.
+      setResult(null);
+      setProgress(null);
       setPhase("error");
       const message = err instanceof StegoApiError ? err.message : err instanceof Error ? err.message : "Embedding failed";
       setError(message);
+      setErrorCode(err instanceof StegoApiError ? err.code ?? null : null);
       toast({ variant: "destructive", title: "Embed failed", description: message });
+    } finally {
+      if (encodeAbort.current === controller) encodeAbort.current = null;
     }
   };
 
   const reset = () => {
     clearCover();
-    setMessage(""); setPassword(""); setChannelPreset("NO_COMPRESSION");
+    setMessage(""); setPassword("");
+    setCarrierPreset("chat_hd");
+    payloadCompressionTouched.current = false;
+    setPayloadCompression("NO_COMPRESSION");
   };
 
   const downloadStego = () => {
     if (!result) return;
-    const blob: Blob | undefined = (result as EmbedResult & { stegoBlob?: Blob }).stegoBlob;
+    const blob: Blob | undefined = result.stegoBlob;
     if (!blob) {
       toast({ title: "Download unavailable", description: "The stego file did not come back from the server." });
       return;
@@ -205,6 +284,7 @@ export default function EncodePage() {
             selected={cover}
             onSelect={selectCover}
             onClear={clearCover}
+            onReject={rejectFile}
             headline="Choose a cover file"
             subline="An ordinary image or video that will carry your hidden payload."
             cta="Drop an image or video here"
@@ -251,6 +331,7 @@ export default function EncodePage() {
                         selected={payloadFile}
                         onSelect={selectPayloadFile}
                         onClear={clearPayloadFile}
+                        onReject={rejectFile}
                         headline={payloadType === "image" ? "Choose the image payload" : "Choose the text file"}
                         subline={payloadType === "image" ? "The image you want to hide inside the cover." : "The document you want to conceal."}
                         cta={payloadType === "image" ? "Drop an image here" : "Drop a text file here"}
@@ -267,23 +348,29 @@ export default function EncodePage() {
             </div>
           )}
 
-          {/* 04 — Carrier preset (capacity + survivability from the capacity API) */}
+          {/* 04 — Carrier preset (survivability axis; capacity from the mapped engine tier) */}
           {cover && analysis && payloadType && (
             <div className="step-block">
               <div className="step-heading"><span className="step-number">04</span><div><h2>Carrier preset</h2><p>Each preset trades capacity for how well the payload survives re-compression.</p></div></div>
-              <RadioGroup className="option-grid" value={presetId} onValueChange={setPresetId} data-testid="preset-group">
-                {analysis.presets.map((preset) => {
-                  const selected = presetId === preset.id;
-                  const presetMax = preset.maxBytesForPayload[payloadType];
+              <RadioGroup className="option-grid" value={carrierPreset} onValueChange={changeCarrierPreset} data-testid="carrier-group">
+                {CARRIER_PRESETS.map((preset) => {
+                  const selected = carrierPreset === preset.id;
+                  const mappedTier = carrierPresetToTierId(preset.id, tierIds);
+                  const tier = mappedTier ? analysis.presets.find((p) => p.id === mappedTier) : null;
+                  const presetMax = tier && payloadType ? tier.maxBytesForPayload[payloadType] : 0;
                   const over = hasPayload && payloadSize > presetMax;
                   return (
-                    <div key={preset.id} className={selected ? "option-card selected" : "option-card"} onClick={() => setPresetId(preset.id)} data-testid={`preset-${preset.id}`}>
-                      <RadioGroupItem value={preset.id} id={`preset-${preset.id}`} aria-label={preset.name} className="option-radio" />
+                    <div key={preset.id} className={selected ? "option-card selected" : "option-card"} onClick={() => changeCarrierPreset(preset.id)} data-testid={`carrier-${preset.id}`}>
+                      <RadioGroupItem value={preset.id} id={`carrier-${preset.id}`} aria-label={preset.label} className="option-radio" />
                       <div className="option-body">
-                        <span className="option-title">{preset.name}<b className={over ? "option-cap over" : "option-cap"} data-testid={`preset-cap-${preset.id}`}>{formatBytes(presetMax)}</b></span>
+                        <span className="option-title">{preset.label}{preset.supportsLosslessTransfer && <b className="option-cap">LOSSLESS</b>}<b className={over ? "option-cap over" : "option-cap"} data-testid={`carrier-cap-${preset.id}`}>{formatBytes(presetMax)}</b></span>
                         <span className="option-sub">{preset.description}</span>
-                        <span className="option-surv"><ShieldCheck size={11} /> {preset.survivabilityDescription}</span>
-                        <span className="option-ber">EST. BER AFTER COMPRESSION · {(preset.expectedBer * 100).toFixed(2)}%</span>
+                        {preset.warnings.map((w) => (
+                          <span key={w} className="option-surv"><ShieldCheck size={11} /> {w}</span>
+                        ))}
+                        {tier && (
+                          <span className="option-ber">EST. BER AFTER COMPRESSION · {(tier.expectedBer * 100).toFixed(2)}%</span>
+                        )}
                       </div>
                     </div>
                   );
@@ -311,25 +398,31 @@ export default function EncodePage() {
             </div>
           )}
 
-          {/* 06 — Compression preset (channel-level, preset-aware capacity) */}
+          {/* 06 — Payload compression (independent of carrier preset) */}
           {cover && analysis && payloadType && (
             <div className="step-block">
-              <div className="step-heading"><span className="step-number">06</span><div><h2>Compression preset</h2><p>How the payload bytes travel inside the HSTG v2 container — switching preset re-checks capacity live.</p></div></div>
-              <RadioGroup className="option-grid" value={channelPreset} onValueChange={(v) => changeChannelPreset(v as ChannelCompressionPreset)} data-testid="compress-group">
-                {CHANNEL_COMPRESSION_OPTIONS.map((option) => {
-                  const selected = channelPreset === option.id;
+              <div className="step-heading"><span className="step-number">06</span><div><h2>Payload compression</h2><p>How the payload bytes travel inside the HSTG v2 container — switching mode re-checks capacity live.</p></div></div>
+              <RadioGroup className="option-grid" value={payloadCompression} onValueChange={(v) => changePayloadCompression(v as PayloadCompression)} data-testid="payload-compression-group">
+                {(
+                  [
+                    { id: "NO_COMPRESSION" as const, name: "No compression", icon: ShieldCheck, description: "Payload is carried verbatim inside the container — AES-256-GCM + RS-ECC stay active, nothing alters the bytes." },
+                    { id: "DEFLATE" as const, name: "Deflate", icon: Archive, description: "DEFLATE the payload before Reed-Solomon ECC; measured median 1.35x shrink for repetitive text files." },
+                  ]
+                ).map((option) => {
+                  const selected = payloadCompression === option.id;
+                  const Icon = option.icon;
                   return (
-                    <div key={option.id} className={selected ? "option-card selected" : "option-card"} onClick={() => changeChannelPreset(option.id)} data-testid={`compress-${option.id}`}>
-                      <RadioGroupItem value={option.id} id={`compress-${option.id}`} aria-label={option.name} className="option-radio" />
+                    <div key={option.id} className={selected ? "option-card selected" : "option-card"} onClick={() => changePayloadCompression(option.id)} data-testid={`payload-compression-${option.id}`}>
+                      <RadioGroupItem value={option.id} id={`payload-compression-${option.id}`} aria-label={option.name} className="option-radio" />
                       <div className="option-body">
-                        <span className="option-title">{option.id === "NO_COMPRESSION" ? <ShieldCheck size={16} /> : <Archive size={16} />} {option.name} {option.default && <b className="option-cap">DEFAULT</b>}</span>
+                        <span className="option-title"><Icon size={16} /> {option.name}</span>
                         <span className="option-sub">{option.description}</span>
                       </div>
                     </div>
                   );
                 })}
               </RadioGroup>
-              {analyzing && <p className="capacity-empty" data-testid="preset-reanalyzing">Re-checking capacity for {CHANNEL_COMPRESSION_OPTIONS.find((o) => o.id === channelPreset)?.name}…</p>}
+              {analyzing && <p className="capacity-empty" data-testid="preset-reanalyzing">Re-checking capacity for {payloadCompression === "DEFLATE" ? "Deflate" : "No compression"}…</p>}
             </div>
           )}
 
@@ -341,13 +434,20 @@ export default function EncodePage() {
             </div>
           )}
 
-          {error && <p className="form-error" role="alert" data-testid="error-encode"><X size={13} /> {error}</p>}
+          {error && <p className="form-error" role="alert" data-testid="error-encode"><X size={13} /> {error}{errorCode && errorCode !== "FILE_REJECTED" ? ` (${errorCode})` : ""}</p>}
 
           {/* 07 — Action + determinate progress */}
           {!running && phase !== "done" && (
-            <button className="button button-primary action-button" disabled={!canEncode} onClick={runEncode} data-testid="button-encode">
-              <LockKeyhole size={16} /> Encode payload into carrier <ArrowRight size={15} />
-            </button>
+            <div className="action-row">
+              <button className="button button-primary action-button" disabled={!canEncode} onClick={runEncode} data-testid="button-encode">
+                <LockKeyhole size={16} /> Encode payload into carrier <ArrowRight size={15} />
+              </button>
+              {(phase === "error" || error) && (cover || error) && (
+                <button className="button button-ghost reset-button" onClick={reset} data-testid="button-reset-encode">
+                  <X size={15} /> Start over
+                </button>
+              )}
+            </div>
           )}
           {phase === "done" && (
             <button className="button button-ghost reset-button" onClick={reset} data-testid="button-another-encode"><Plus size={15} /> Encode another file</button>
@@ -372,7 +472,8 @@ export default function EncodePage() {
               result={result}
               payloadType={payloadType}
               payloadSize={payloadSize}
-              channelPreset={channelPreset}
+              carrierPreset={carrierPreset}
+              payloadCompression={payloadCompression}
               onDownload={downloadStego}
             />
           ) : (
@@ -385,16 +486,17 @@ export default function EncodePage() {
 }
 
 function EncodeResult({
-  cover, result, payloadType, payloadSize, channelPreset, onDownload,
+  cover, result, payloadType, payloadSize, carrierPreset, payloadCompression, onDownload,
 }: {
   cover: DropFile;
   result: EmbedResult;
   payloadType: PayloadType | null;
   payloadSize: number;
-  channelPreset: ChannelCompressionPreset;
+  carrierPreset: string;
+  payloadCompression: PayloadCompression;
   onDownload: () => void;
 }) {
-  const compressed = channelPreset !== "NO_COMPRESSION";
+  const compressed = payloadCompression === "DEFLATE";
   return (
     <div className="success-result">
       <div className="success-mark"><Check size={18} /></div>
@@ -417,8 +519,8 @@ function EncodeResult({
       <button className="button button-primary full-button" onClick={onDownload} data-testid="button-download-stego"><Download size={15} /> Download stego file</button>
       <TechnicalDetails
         rows={[
-          { label: "CARRIER PRESET", value: result.preset },
-          { label: "COMPRESSION PRESET", value: getChannelPresetLabel(channelPreset) },
+          { label: "CARRIER PRESET", value: getCarrierPresetLabel(result.carrierPreset ?? carrierPreset) },
+          { label: "PAYLOAD COMPRESSION", value: getPayloadCompressionLabel(result.payloadCompression ?? payloadCompression) },
           { label: "CONTAINER SIZE", value: result.containerBytes != null ? formatBytes(result.containerBytes) : "N/A" },
           { label: "ALGORITHM", value: result.algorithm },
           { label: "PSNR", value: result.psnr != null ? `${result.psnr.toFixed(2)} dB` : "N/A" },
@@ -428,7 +530,7 @@ function EncodeResult({
           { label: "COMPRESSION", value: compressed ? "DEFLATE / RFC 1951" : "NO COMPRESSION" },
           { label: "FRAMING", value: "HSTG / V2 / SHA-256 + RS ECC" },
         ]}
-        note="Chosen compression preset + container size come from the encode request and the X-Stego-Container-Bytes header; PSNR / SSIM / BER are measured per-encode by the server (X-Stego-* headers). The container flag records the compression mode for decode."
+        note="Carrier preset and payload compression come from the encode request; container size comes from the X-Stego-Container-Bytes header. PSNR / SSIM / BER are measured per-encode by the server (X-Stego-* headers). The container flag records the compression mode for decode."
       />
     </div>
   );

@@ -131,6 +131,18 @@ class VideoEmbedError(RuntimeError):
     """Raised when a video cover cannot hold / accept the requested payload."""
 
 
+class VideoCapacityError(VideoEmbedError):
+    """The cover does not offer enough carrier blocks for the payload.
+
+    A distinct subclass so the API can return a stable ``VIDEO_CAPACITY_EXCEEDED``
+    code (and fail BEFORE any re-encode) instead of string-matching the message.
+    """
+
+
+class VideoNoIFramesError(VideoEmbedError):
+    """The cover exposes no usable I-frame grid to embed into."""
+
+
 @dataclass
 class EmbedStats:
     """Diagnostics returned by :func:`embed_video`."""
@@ -360,9 +372,9 @@ def _embed_at_delta(
             chroma[idx] = (cb, cr)
             ordered.append(idx)
     if not ordered:
-        raise VideoEmbedError("No I-frames available in cover video")
+        raise VideoNoIFramesError("No I-frames available in cover video")
     if gop not in (1,) and len(ordered) < 1:
-        raise VideoEmbedError("Cover video has no embeddable I-frame grid")
+        raise VideoNoIFramesError("Cover video has no embeddable I-frame grid")
 
     # --- initial carrier pool + capacity check -----------------------------
     bitstream = frame_bitstream(container, use_delta)
@@ -373,14 +385,14 @@ def _embed_at_delta(
     cover_pool = _pool_positions(len(ordered), nby, nbx)
     eligible_total = sum(_count_eligible(_luma_of(frames[i])) for i in ordered)
     if len(cover_pool) < needed:
-        raise VideoEmbedError(
+        raise VideoCapacityError(
             f"Cover holds {len(cover_pool)} blocks per grid; need "
             f"{needed} blocks (with x{REPETITIONS} redundancy) for a "
             f"{len(container)}-byte payload. Use a higher-capacity preset or "
             "a shorter payload."
         )
     if eligible_total < needed:
-        raise VideoEmbedError(
+        raise VideoCapacityError(
             f"Cover offers only {eligible_total} mid-band carrier blocks; need "
             f"{needed} blocks (with x{REPETITIONS} redundancy) for a "
             f"{len(container)}-byte payload. Use a higher-capacity preset or "

@@ -57,10 +57,13 @@ const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve,
 /** Error the pages can surface via Toast/Alert (carries server 400 detail). */
 export class StegoApiError extends Error {
   status?: number;
-  constructor(message: string, status?: number) {
+  /** Stable machine-readable error code from the backend (ErrorResponse.code). */
+  code?: string;
+  constructor(message: string, status?: number, code?: string) {
     super(message);
     this.name = "StegoApiError";
     this.status = status;
+    this.code = code;
   }
 }
 
@@ -71,8 +74,19 @@ function getDetail(err: ApiError): string {
   return err.message;
 }
 
+function getCode(err: ApiError): string | undefined {
+  if (err.data && typeof err.data === "object" && "code" in err.data) {
+    const code = (err.data as { code?: unknown }).code;
+    return code == null ? undefined : String(code);
+  }
+  return undefined;
+}
+
 function rethrow(err: unknown, fallback: string): never {
-  if (err instanceof ApiError) throw new StegoApiError(getDetail(err), err.status);
+  if (err instanceof ApiError) throw new StegoApiError(getDetail(err), err.status, getCode(err));
+  if (err instanceof DOMException && err.name === "AbortError") {
+    throw new StegoApiError("Request cancelled.", undefined, "ABORTED");
+  }
   throw new StegoApiError(err instanceof Error ? err.message : fallback);
 }
 
@@ -84,6 +98,8 @@ export interface EncodeInput {
   presetId: string;
   compress: boolean;
   channelPreset: ChannelCompressionPreset;
+  carrierPreset: string;
+  payloadCompression: "NO_COMPRESSION" | "DEFLATE";
 }
 
 export type EncodeResult = EmbedResult & { stegoBlob: Blob; compressed: boolean };
@@ -103,8 +119,9 @@ export type ExtractApiResult = ExtractResultRaw & { compressed: boolean };
 export async function runEmbed(
   input: EncodeInput,
   onProgress: (progress: EmbedProgress) => void,
+  signal?: AbortSignal,
 ): Promise<EncodeResult> {
-  const { cover, payloadType, payloadData, password, presetId, compress, channelPreset } = input;
+  const { cover, payloadType, payloadData, password, presetId, compress, channelPreset, carrierPreset, payloadCompression } = input;
   const isVideo = cover.kind === "video";
 
   onProgress({ stage: "uploading", percent: 10, detail: "UPLOADING COVER + PAYLOAD" });
@@ -114,6 +131,8 @@ export async function runEmbed(
   formData.append("cover", cover.file);
   formData.append("payload_type", UI_TO_API[payloadType]);
   formData.append("preset", presetId);
+  formData.append("carrier_preset", carrierPreset);
+  formData.append("payload_compression", payloadCompression);
   formData.append("password", password);
   formData.append("compress", compress.toString());
   formData.append("compression_preset", channelPreset);
@@ -130,6 +149,7 @@ export async function runEmbed(
   const { blob, headers } = await encodeViaFetch(
     isVideo ? "/api/stego/video/encode" : "/api/stego/image/encode",
     formData,
+    signal,
   );
   onProgress({ stage: "embedding", percent: 100, detail: "EMBEDDED — READY" });
 
@@ -144,6 +164,8 @@ export async function runEmbed(
     encrypted: password.length > 0,
     preset: presetId,
     channelPreset,
+    carrierPreset,
+    payloadCompression,
     containerBytes: parseHeaderFloat(headers.get("X-Stego-Container-Bytes")),
     stegoBlob: blob,
     compressed: compress,
@@ -154,13 +176,23 @@ export async function runEmbed(
  * POST a multipart encode form via fetch and return the stego blob plus the
  * response headers (Orval's generated client hides headers behind Blob).
  * Errors are surfaced exactly like the generated client: an ApiError whose
- * message carries the server's `detail`.
+ * message carries the server's `detail` (and `code`). An optional AbortSignal
+ * lets a superseded request be cancelled so a stale response cannot land.
  */
 async function encodeViaFetch(
   url: string,
   formData: FormData,
+  signal?: AbortSignal,
 ): Promise<{ blob: Blob; headers: Headers }> {
-  const response = await fetch(url, { method: "POST", body: formData });
+  let response: Response;
+  try {
+    response = await fetch(url, { method: "POST", body: formData, signal });
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") {
+      throw new StegoApiError("Request cancelled.", undefined, "ABORTED");
+    }
+    throw err;
+  }
   if (!response.ok) {
     let data: unknown = null;
     try {
@@ -210,6 +242,7 @@ export async function runExtract(
   stego: DropFile,
   password: string,
   onProgress: (progress: ExtractProgress) => void,
+  signal?: AbortSignal,
 ): Promise<ExtractApiResult> {
   const isVideo = stego.kind === "video";
 
@@ -220,8 +253,8 @@ export async function runExtract(
   try {
     onProgress({ stage: "reading", percent: 30, detail: "READING HSTG CONTAINER" });
     res = isVideo
-      ? await stegoVideoDecode({ stego: stego.file, password })
-      : await stegoImageDecode({ stego: stego.file, password });
+      ? await stegoVideoDecode({ stego: stego.file, password }, { signal })
+      : await stegoImageDecode({ stego: stego.file, password }, { signal });
   } catch (err) {
     onProgress({ stage: "error", percent: 100, detail: "EXTRACTION FAILED" });
     rethrow(err, "Extraction failed — the server may have rejected this file.");

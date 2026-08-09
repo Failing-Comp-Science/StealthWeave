@@ -1,53 +1,89 @@
 """
-Preset-aware video capacity calculator (task step 4).
+Preset-aware video capacity calculator (I-frame keyframe-grid model).
 
 ``video_capacity`` returns, for EVERY video preset in one call, the usable
-payload capacity computed from I-frame DCT coefficient slots at that preset's
-target CRF. Model + citations: see ``presets.py``.
+payload capacity computed from the I-frame DCT mid-band carrier slots on the
+cover's ACTUAL I-frame keyframe grid. Model + citations: see ``presets.py``;
+this module's carrier rule is ``_dct.count_mid_usable_blocks``.
+
+The previous model bridged CRF to a JPEG quality-equivalent and ran the JPEG
+8x8 texture estimator, which reported roughly *zero* carriers at
+standard/heavy CRFs. That was a modeling artifact: the real embedder
+(``modules.video_stego``) never quantizes to a JPEG table -- it raw-DCT's the
+I-frame luma, treats every block with >= ``MIN_AC_MID`` mid-band coefficients
+as a usable carrier (CRF-independent), and snaps parity levels under a closed
+loop against the H.264 re-encode. The evaluation benchmark confirmed the
+engine's embed ceiling is CRF-independent (identical max payload at CRF 18 /
+23 / 28), so the per-preset difference is robustness (``expected_ber``) and
+the QIM delta, not the carrier count. This module now models the engine's
+actual eligibility rule.
+
+The I-frame grid is derived from the cover's own keyframes (PyAV
+``probe_video``/``keyframe_grid``), matching the embedder's ``_grid_indices``:
+the payload rides I-frames at display indices 0, G, 2G, ... where G is the
+cover's median keyframe spacing. Texture is measured ONLY on those I-frames
+(never on interpolated P/B frames), so the estimated slots per I-frame
+reflect the carriers the engine actually uses.
 
 Capacity is reported as:
   * ``max_bytes_per_minute_text_message`` / ``..._text_file`` - the *marginal*
-    coded rate each minute of I-frames contributes (the fixed container
+    coded rate each minute of I-frame contributes (the fixed container
     overhead is a one-time cost, not part of a per-minute rate).
   * ``max_bytes_image`` - a concrete whole-clip figure for a single embedded
     image payload, with the fixed container overhead subtracted once.
 
-I-frame model: H.264 places an intra (I) frame at least every GOP; typical
-streaming encodes force a keyframe every ~2 s [x264 keyint]. We assume one
-usable intra frame every ``GOP_SECONDS`` and estimate usable coefficients per
-intra frame by sampling decoded frames and running the JPEG 8x8 texture
-estimator at the preset's ``qf_equiv`` (see presets.py for the CRF<->QF bridge
-rationale [H264][x264]).
+Carrier model (mirrors the engine; validated by the evaluation harness): the
+embedder does *not* quantize to a JPEG table -- it snaps raw mid-band DCT
+magnitudes to a QIM parity level and closes the loop against the H.264
+re-encode. Usable blocks per I-frame therefore follow the engine's eligibility
+rule (>= ``MIN_AC_MID`` raw mid-band coefficients above ``TINY``) and are
+CRF-independent; the per-preset differences are robustness (``expected_ber``)
+and the QIM delta, not the carrier count [H264][x264]. Each usable block
+carries one channel bit (BITS_PER_BLOCK == 1, REPETITIONS == 1), so the
+per-I-frame slot count maps 1:1 onto channel-coded capacity (fitted exactly
+via ``modules.capacity.accounting``, including the outer channel RS layer).
 """
 from __future__ import annotations
 
-import math
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
 try:
+    from ..video_stego._codec import keyframe_grid, probe_video
+except Exception:  # pragma: no cover - PyAV is optional for the calculator
+    keyframe_grid = probe_video = None
+
+
+def _require_cv2():
+    """Import OpenCV lazily, ONLY when PyAV is unavailable.
+
+    IMPORTANT (collision mitigation, WORK_AND_FAILURES §4.2.4): OpenCV and PyAV
+    both bundle their own FFmpeg builds (libavdevice 61.x etc.). Importing cv2
+    BEFORE PyAV makes the interpreter load two different ``libavdevice``
+    dylibs and emits ``Class AVFFrameReceiver is implemented in both ...``
+    objc warnings that can cause spurious casting failures / mysterious crashes
+    in the audio/video pipeline. The video path uses PyAV exclusively
+    (``modules.video_stego``); OpenCV here is only a fallback prober for
+    environments without PyAV, so it is imported lazily inside the fallback
+    function and NEVER loaded in the normal PyAV-present path.
+    """
     import cv2  # opencv-python is pinned in requirements.txt
-except Exception:  # pragma: no cover - environment guard
-    cv2 = None
+
+    return cv2
 
 from ..container import (
     CompressionPreset,
     container_overhead_bytes,
-    ecc_expansion_ratio,
 )
-from ._dct import analyze_texture, rgb_to_luma
+from ._dct import count_mid_usable_blocks, rgb_to_luma
+from .accounting import max_payload_channel_bits
 from .presets import (
-    BITS_PER_COEFF,
     IMAGE_COMPRESSION_RATIO,
-    SHRINKAGE_RETENTION,
     VIDEO_PRESETS,
-    scaled_luma_table,
 )
 
-#: Assumed spacing between usable intra (I) frames, in seconds [x264 keyint].
-GOP_SECONDS = 2.0
-#: Max decoded frames sampled to estimate per-frame texture (bounds runtime).
+#: Max decoded I-frames sampled to estimate per-frame texture (bounds runtime).
 _MAX_SAMPLES = 8
 _FILENAME_BUDGET = 64
 _MIME_BUDGET = 32
@@ -57,10 +93,59 @@ class VideoProbeError(ValueError):
     """Raised when a video cannot be opened / probed."""
 
 
-def _probe_and_sample(path: str):
-    """Open ``path``; return (width, height, fps, duration_sec, [luma frames])."""
-    if cv2 is None:
-        raise VideoProbeError("OpenCV (cv2) is unavailable; cannot probe video")
+def _probe_and_sample(
+    path: str,
+) -> Tuple[int, int, float, float, int, float, List[np.ndarray]]:
+    """Probe ``path``; return (w, h, fps, duration_sec, iframes_total,
+    iframes_per_min, [luma I-frames]).
+
+    Uses PyAV to read the cover's real I-frame keyframe grid (exactly what the
+    embedder uses); falls back to OpenCV uniform sampling with a 2 s GOP
+    estimate when PyAV is unavailable.
+    """
+    if probe_video is not None:
+        return _probe_pyav(path)
+    return _probe_cv2(path)
+
+
+def _probe_pyav(
+    path: str,
+) -> Tuple[int, int, float, float, int, float, List[np.ndarray]]:
+    from ..video_stego._codec import decode_rgb
+
+    width, height, fps, nb_frames, _keyframes = probe_video(path)
+    if fps <= 0:
+        fps = 25.0
+    if width <= 0 or height <= 0:
+        raise VideoProbeError("Video has invalid dimensions")
+    duration = (nb_frames / fps) if nb_frames > 0 else 0.0
+
+    gop = keyframe_grid(path, fps)
+    grid = list(range(0, nb_frames, max(1, int(gop))))  # engine's _grid_indices
+    iframes_total = len(grid) if grid else 1
+    iframes_per_min = 60.0 * fps / max(1, int(gop))
+
+    # Sample I-frame luma ONLY (the carriers the engine embeds into).
+    wanted = set(grid[:: max(1, len(grid) // _MAX_SAMPLES)][:_MAX_SAMPLES])
+    sample_luma: List[np.ndarray] = []
+    for idx, rgb, _is_keyframe in decode_rgb(path):
+        if idx in wanted:
+            sample_luma.append(rgb_to_luma(rgb))
+    if not sample_luma:
+        raise VideoProbeError("Could not decode any I-frames from video")
+    return width, height, fps, duration, iframes_total, iframes_per_min, sample_luma
+
+
+def _probe_cv2(
+    path: str,
+) -> Tuple[int, int, float, float, int, float, List[np.ndarray]]:
+    """OpenCV fallback: uniform frame samples, 2 s GOP estimate."""
+    try:
+        cv2 = _require_cv2()
+    except Exception as exc:  # noqa: BLE001
+        raise VideoProbeError(
+            "Neither PyAV nor OpenCV is available; cannot probe video"
+        ) from exc
     cap = cv2.VideoCapture(path)
     if not cap.isOpened():
         raise VideoProbeError("Could not open video file")
@@ -102,7 +187,10 @@ def _probe_and_sample(path: str):
         if not sample_luma:
             raise VideoProbeError("Could not decode any frames from video")
 
-        return width, height, fps, duration, sample_luma
+        gop = 2.0 * fps
+        iframes_total = max(1, int(np.ceil(duration / 2.0))) if duration > 0 else 1
+        iframes_per_min = 60.0 / 2.0
+        return width, height, fps, duration, iframes_total, iframes_per_min, sample_luma
     finally:
         cap.release()
 
@@ -121,21 +209,20 @@ def video_capacity(
         compression_preset: channel-level preset governing the TEXT_FILE
             compression multiplier (default NO_COMPRESSION => factor 1.0).
     """
-    width, height, fps, duration, samples = _probe_and_sample(path)
+    width, height, fps, duration, iframes_total, iframes_per_min, samples = _probe_and_sample(path)
     if duration_sec_hint and duration_sec_hint > 0:
         duration = float(duration_sec_hint)
+        # The I-frame grid scales with the (hinted) clip length: keep the
+        # per-minute I-frame rate and re-derive the whole-clip grid so a
+        # longer cover exposes proportionally more carriers.
+        iframes_total = max(1, int(round(duration / 60.0 * iframes_per_min)))
 
-    iframes_total = max(1, int(math.floor(duration / GOP_SECONDS))) if duration > 0 else 1
-    iframes_per_min = 60.0 / GOP_SECONDS
-
-    overhead_message = container_overhead_bytes(use_ecc=True, encrypted=True)
     overhead_image = container_overhead_bytes(
         original_filename="x" * _FILENAME_BUDGET,
         mime_type="x" * _MIME_BUDGET,
         use_ecc=True,
         encrypted=True,
     )
-    ecc = ecc_expansion_ratio()
     # NOTE (calibrated 2026-08-08): ``text_compression_factor`` is now the
     # empirically measured TEXT_FILE DEFLATE ratio (median 1.35 on the
     # deterministic synthetic corpus; see docs/COMPRESSION_PRESETS.md). The
@@ -145,27 +232,26 @@ def video_capacity(
 
     results: List[Dict] = []
     for preset in VIDEO_PRESETS:
-        quant = scaled_luma_table(preset.qf_equiv)
+        # Usable carrier blocks per sampled I-frame, using the engine's OWN
+        # eligibility rule (raw mid-band DCT, CRF-independent).
+        per_frame_slots = [count_mid_usable_blocks(luma) for luma in samples]
+        usable_slots_per_iframe = float(np.mean(per_frame_slots))
 
-        # Average usable AC slots per (intra) frame across the samples.
-        per_frame_slots = []
-        total_blocks = high_blocks = 0
-        for luma in samples:
-            tb, hb, slots = analyze_texture(luma, quant)
-            per_frame_slots.append(slots)
-            total_blocks, high_blocks = tb, hb  # representative (uniform size)
-        usable_slots_per_iframe = float(np.mean(per_frame_slots)) * SHRINKAGE_RETENTION
+        # Marginal per-minute rate (fixed container overhead excluded from a
+        # rate). Each usable block carries one channel bit; the exact channel
+        # accounting (container RS + channel RS + FRAMING_BITS) sizes the
+        # payload.
+        min_slots_per_min = usable_slots_per_iframe * iframes_per_min
+        max_pm_message = int(max_payload_channel_bits(int(min_slots_per_min), 0, ratio=1.0))
+        max_pm_file = int(max_payload_channel_bits(int(min_slots_per_min), 0, ratio=text_factor))
 
-        # Marginal per-minute embeddable bytes (overhead excluded from a rate).
-        embeddable_per_min = usable_slots_per_iframe * iframes_per_min * BITS_PER_COEFF / 8.0
-        coded_per_min = embeddable_per_min / ecc
-        max_pm_message = int(math.floor(coded_per_min))
-        max_pm_file = int(math.floor(coded_per_min * text_factor))
-
-        # Whole-clip capacity for a single image payload (overhead once).
-        embeddable_total = usable_slots_per_iframe * iframes_total * BITS_PER_COEFF / 8.0
-        coded_total = max(0.0, (embeddable_total - overhead_image)) / ecc
-        max_image = int(math.floor(coded_total * IMAGE_COMPRESSION_RATIO))
+        # Whole-clip image payload (overhead subtracted once).
+        slots_total = usable_slots_per_iframe * iframes_total
+        max_image = int(
+            max_payload_channel_bits(
+                int(slots_total), overhead_image, ratio=IMAGE_COMPRESSION_RATIO
+            )
+        )
 
         results.append({
             "id": preset.id,
@@ -182,7 +268,7 @@ def video_capacity(
             "max_bytes_image": max_image,
             # diagnostics
             "iframes_total": iframes_total,
-            "iframes_per_minute": iframes_per_min,
+            "iframes_per_minute": round(iframes_per_min, 3),
             "usable_coeff_slots_per_iframe": int(usable_slots_per_iframe),
             "width": width,
             "height": height,

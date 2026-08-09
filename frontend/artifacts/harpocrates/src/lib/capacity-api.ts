@@ -13,6 +13,10 @@
  * `compression_preset` (NO_COMPRESSION | CHAT_STANDARD | CHAT_HD) is forwarded
  * as a query param so the returned caps reflect the preset-aware capacity
  * model (Chat presets scale TEXT_FILE capacity by the ~1.35x DEFLATE factor).
+ * The carrier-level preset (chat_standard | chat_hd | lossless_high_capacity)
+ * does NOT change the capacity model: each carrier preset maps onto one of the
+ * engine tiers the endpoint already reports, so the Encode page derives
+ * per-carrier caps client-side.
  * This adapter maps the backend shape onto the UI's existing
  * `CompressionPreset` shape (so the Encode page's preset picker and live
  * capacity check keep working unchanged), converting the server enum
@@ -78,7 +82,7 @@ function toUiPreset(
       ? {
           text: nn(preset.max_bytes_text_message),
           "text-file": nn(preset.max_bytes_text_file),
-          image: 0, // images can't carry an image payload (matrix)
+          image: 0,
         }
       : {
           text: Math.floor(nn(preset.max_bytes_per_minute_text_message) * minutes),
@@ -102,13 +106,16 @@ async function callCapacity(
   compressionPreset: ChannelCompressionPreset = "NO_COMPRESSION",
 ): Promise<CapacityResponse> {
   try {
+    const params = {
+      payload_type: UI_TO_API[payloadType],
+      compression_preset: compressionPreset,
+    };
     return await stegoCapacity(
       { cover: drop.file },
-      { payload_type: UI_TO_API[payloadType], compression_preset: compressionPreset },
+      params,
     );
   } catch (err) {
     if (err instanceof ApiError) {
-      // ApiError.message already includes the server's `detail` text.
       const detail =
         (err.data && typeof err.data === "object" && "detail" in err.data
           ? String((err.data as { detail?: unknown }).detail)
@@ -130,11 +137,6 @@ export interface CoverAnalysis {
 /**
  * Drop-in replacement for `mockAnalyzeCover`: one request returns every preset
  * plus the allowed payload types for the detected cover type.
- *
- * We query with the first always-valid payload type (TEXT_MESSAGE is allowed
- * for both cover types), then map the full preset set. Because the endpoint
- * returns per-payload caps, no re-fetch is needed when the user switches
- * payload type.
  */
 export async function analyzeCover(
   drop: DropFile,

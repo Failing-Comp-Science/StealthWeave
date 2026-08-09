@@ -10,26 +10,117 @@ export interface CompressionPreset {
   maxBytesForPayload: Record<PayloadType, number>;
   expectedBer: number;
   survivabilityDescription: string;
+  accounting?: Record<string, unknown>;
 }
 
 /**
- * Channel-level compression preset for the payload inside the HSTG v2
- * container (independent of the carrier preset above). Maps 1:1 onto the
- * backend's `CompressionPreset` enum (NO_COMPRESSION | CHAT_STANDARD |
- * CHAT_HD) accepted by /capacity and the encode endpoints. Chat presets apply
- * DEFLATE to the payload (text_compression_factor ≈ 1.35), which raises the
- * TEXT_FILE capacity returned by the preset-aware capacity model.
+ * Carrier-level preset (NEW in Stage 2): governs carrier capacity and
+ * transfer semantics. Independent of payload compression.
  */
-export type ChannelCompressionPreset = "NO_COMPRESSION" | "CHAT_STANDARD" | "CHAT_HD";
+export interface CarrierPreset {
+  id: string;
+  label: string;
+  description: string;
+  modality: "image" | "video" | "both";
+  payloadCompressionDefault: "NO_COMPRESSION" | "DEFLATE";
+  supportsLosslessTransfer: boolean;
+  expectsDownstreamReencode: boolean;
+  imageQualityFactor?: number;
+  imageDerate?: number;
+  videoCrf?: number;
+  videoDerate?: number;
+  lsbBitsPerChannel?: number;
+  safetyMarginRatio: number;
+  capacityModelVersion: string;
+  warnings: string[];
+}
 
-export interface ChannelCompressionOption {
-  id: ChannelCompressionPreset;
+/**
+ * Payload compression mode (independent of carrier preset).
+ * NO_COMPRESSION: raw payload -> RS-ECC -> AES-GCM (no DEFLATE)
+ * DEFLATE: payload -> DEFLATE -> RS-ECC -> AES-GCM
+ */
+export type PayloadCompression = "NO_COMPRESSION" | "DEFLATE";
+
+export const CARRIER_PRESETS: CarrierPreset[] = [
+  {
+    id: "chat_standard",
+    label: "Chat standard",
+    description: "WhatsApp/Messenger default upload — aggressive recompression expected.",
+    modality: "both" as const,
+    payloadCompressionDefault: "DEFLATE" as const,
+    supportsLosslessTransfer: false,
+    expectsDownstreamReencode: true,
+    imageQualityFactor: 75,
+    imageDerate: 0.4,
+    videoCrf: 28,
+    videoDerate: 1.0,
+    safetyMarginRatio: 0.10,
+    capacityModelVersion: "1.0",
+    warnings: [
+      "Survives: WhatsApp/Messenger default re-encode (~Q60-70)",
+      "NOT guaranteed to survive: multiple re-encodes, social media transcodes",
+      "Payload compression default: DEFLATE (chat standard)",
+    ],
+  },
+  {
+    id: "chat_hd",
+    label: "Chat HD",
+    description: "WhatsApp/Messenger HD toggle — moderate recompression.",
+    modality: "both" as const,
+    payloadCompressionDefault: "DEFLATE" as const,
+    supportsLosslessTransfer: false,
+    expectsDownstreamReencode: true,
+    imageQualityFactor: 85,
+    imageDerate: 0.6,
+    videoCrf: 23,
+    videoDerate: 1.0,
+    safetyMarginRatio: 0.07,
+    capacityModelVersion: "1.0",
+    warnings: [
+      "Survives: WhatsApp/Messenger HD re-encode (~Q80-85)",
+      "NOT guaranteed to survive: standard chat re-encode, multiple passes",
+      "Payload compression default: DEFLATE (chat standard)",
+    ],
+  },
+  {
+    id: "lossless_high_capacity",
+    label: "Lossless high capacity (Pendrive / LAN)",
+    description:
+      "Maximum direct-extraction capacity for byte-preserving transfer. " +
+      "PNG/BMP covers use lossless LSB spatial embedding; JPEG covers use " +
+      "the highest DCT QF (95). Video uses CRF 18 (near-lossless). " +
+      "The generated file extracts perfectly when copied bit-for-bit " +
+      "(pendrive, local disk, LAN). It does NOT survive any lossy re-encode.",
+    modality: "both" as const,
+    payloadCompressionDefault: "NO_COMPRESSION" as const,
+    supportsLosslessTransfer: true,
+    expectsDownstreamReencode: false,
+    imageQualityFactor: 95,
+    imageDerate: 1.0,
+    videoCrf: 18,
+    videoDerate: 1.0,
+    lsbBitsPerChannel: 1,
+    safetyMarginRatio: 0.0,
+    capacityModelVersion: "1.0",
+    warnings: [
+      "Survives: lossless round-trips (PNG/BMP re-save), NO lossy re-encode",
+      "NOT guaranteed to survive: WhatsApp, Messenger, social media, any re-encode",
+      "Payload compression default: NO COMPRESSION (max capacity)",
+      "Video: CRF 18 (near-lossless) — extracts perfectly if NOT re-encoded",
+    ],
+  },
+];
+export interface ChannelCompressionPresetOption {
+  id: "NO_COMPRESSION" | "CHAT_STANDARD" | "CHAT_HD";
   name: string;
   description: string;
   default?: boolean;
 }
 
-export const CHANNEL_COMPRESSION_OPTIONS: ChannelCompressionOption[] = [
+export type ChannelCompressionPreset = "NO_COMPRESSION" | "CHAT_STANDARD" | "CHAT_HD";
+
+export const CHANNEL_COMPRESSION_OPTIONS: ChannelCompressionPresetOption[] = [
   {
     id: "NO_COMPRESSION",
     name: "No compression",
@@ -63,14 +154,46 @@ export interface EmbedResult {
   encrypted: boolean;
   preset: string;
   /** Channel-level compression preset chosen for this encode. */
-  channelPreset: ChannelCompressionPreset;
+  channelPreset: string;
   /** HSTG v2 container size in bytes (from the X-Stego-Container-Bytes header). */
   containerBytes: number | null;
+  /** Carrier preset chosen for this encode (NEW). */
+  carrierPreset?: string;
+  /** Payload compression mode (NEW). */
+  payloadCompression?: "NO_COMPRESSION" | "DEFLATE";
 }
 
-/** Human-readable label for a channel compression preset (result panel, etc.). */
-export function getChannelPresetLabel(preset: ChannelCompressionPreset): string {
-  return CHANNEL_COMPRESSION_OPTIONS.find((o) => o.id === preset)?.name ?? preset;
+export function getChannelPresetLabel(preset: string): string {
+  const opts = [
+    { id: "NO_COMPRESSION", name: "No compression" },
+    { id: "CHAT_STANDARD", name: "Chat standard" },
+    { id: "CHAT_HD", name: "Chat HD" },
+  ];
+  return opts.find((o) => o.id === preset)?.name ?? preset;
+}
+
+export function getCarrierPresetLabel(id: string): string {
+  return CARRIER_PRESETS.find((p) => p.id === id)?.label ?? id;
+}
+
+/**
+ * Map a carrier preset id onto the engine tier the /api/stego/capacity
+ * response reports. PNG/BMP covers ride the lossless spatial (LSB) engine,
+ * which is carrier-preset-independent: the response carries only the
+ * `lossless_high_capacity` preset, and every carrier maps onto it. Otherwise
+ * chat_standard -> heavy (QF75/CRF28), chat_hd -> standard (QF85/CRF23),
+ * lossless_high_capacity -> light (QF95/CRF18).
+ */
+export function carrierPresetToTierId(carrierPreset: string, tierIds: string[]): string | null {
+  if (tierIds.includes("lossless_high_capacity")) return "lossless_high_capacity";
+  if (carrierPreset === "chat_standard") return tierIds.includes("heavy") ? "heavy" : null;
+  if (carrierPreset === "chat_hd") return tierIds.includes("standard") ? "standard" : null;
+  if (carrierPreset === "lossless_high_capacity") return tierIds.includes("light") ? "light" : null;
+  return null;
+}
+
+export function getPayloadCompressionLabel(mode: PayloadCompression): string {
+  return mode === "DEFLATE" ? "Deflate" : "No compression";
 }
 
 export interface ExtractProgress {

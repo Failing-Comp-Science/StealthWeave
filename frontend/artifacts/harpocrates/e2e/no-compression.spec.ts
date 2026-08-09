@@ -1,4 +1,6 @@
 import { test, expect } from "@playwright/test";
+import * as fs from "fs";
+import * as os from "os";
 
 // 96x96 deterministic-noise PNG cover (spatial-LSB carrier). LSB is lossless,
 // so an encode -> decode round trip must recover the payload exactly and report
@@ -12,13 +14,6 @@ const COVER_PNG_B64 = "iVBORw0KGgoAAAANSUhEUgAAAGAAAABgCAIAAABt+uBvAABsa0lEQVR4n
 const SECRET = "harpocrates no-compression round trip";
 
 test("no-compression encode -> decode round trip", async ({ page }) => {
-  const encodeResponse = page.waitForResponse(
-    (res) =>
-      res.url().includes("/api/stego/image/encode") &&
-      res.request().method() === "POST" &&
-      res.ok(),
-  );
-
   await page.goto("/encode");
 
   // 1. Upload a cover -> the page fetches the real /api/stego/capacity.
@@ -36,18 +31,28 @@ test("no-compression encode -> decode round trip", async ({ page }) => {
   await page.getByTestId("input-secret-message").fill(SECRET);
   await expect(page.getByTestId("capacity-ok")).toBeVisible();
 
-  // 4. "No compression" is the default channel preset; re-assert it is selected.
-  await expect(page.getByTestId("compress-NO_COMPRESSION")).toHaveClass(/selected/);
+  // 4. "No compression" is the default payload-compression mode; re-assert it
+  //    is selected.
+  await expect(page.getByTestId("payload-compression-NO_COMPRESSION")).toHaveClass(/selected/);
 
   // 5. Encode via the real backend, then verify the result panel reports the
   //    chosen preset AND the header flag as NO COMPRESSION.
   await page.getByTestId("button-encode").click();
   const resultPanel = page.locator(".result-panel.complete");
   await expect(resultPanel).toBeVisible({ timeout: 30_000 });
+  
+  // Expand the technical details panel to access compression info
+  await page.getByTestId("button-technical-details").click();
   await expect(resultPanel).toContainText("No compression");
   await expect(resultPanel).toContainText("NO COMPRESSION");
 
-  const stego = Buffer.from(await (await encodeResponse).body());
+  // Download the stego file via the download button (avoids Vite proxy body issue)
+  const downloadPromise = page.waitForEvent("download");
+  await page.getByTestId("button-download-stego").click();
+  const download = await downloadPromise;
+  const stegoPath = `${os.tmpdir()}/stego-test-${Date.now()}.png`;
+  await download.saveAs(stegoPath);
+  const stego = fs.readFileSync(stegoPath);
   expect(stego.length).toBeGreaterThan(0);
 
   // 6. Decode the captured stego file -> payload recovered verbatim, mode shown
@@ -63,5 +68,7 @@ test("no-compression encode -> decode round trip", async ({ page }) => {
   await expect(page.getByTestId("text-extracted-message")).toHaveText(SECRET, {
     timeout: 30_000,
   });
+  // Expand technical details on decode page to see compression mode
+  await page.getByTestId("button-technical-details").click();
   await expect(page.getByText("NO COMPRESSION").first()).toBeVisible();
 });

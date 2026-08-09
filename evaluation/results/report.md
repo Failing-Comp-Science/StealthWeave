@@ -52,15 +52,15 @@ embedder's internal guarantee; `[MEASURED]`. Tables below are the
 
 | Combo | Payload | Preset | [M] BER +/- | [M] NC +/- | [M] extract ok | [MO] capacity B | [MO] worst-extract BER |
 |---|---|---|---|---|---|---|---|
-| video x text message | text message | Light (CRF 18) | 0.0000 +/- 0.0000 | 1.0000 +/- 0.0000 | 100.0% | 601 | 0.0000 |
-| video x text message | text message | Standard (CRF 23) | 0.0000 +/- 0.0000 | 1.0000 +/- 0.0000 | 100.0% | 0 | 0.0006 |
-| video x text message | text message | Heavy (CRF 28) | 0.0000 +/- 0.0000 | 1.0000 +/- 0.0000 | 100.0% | 0 | 0.0060 |
-| video x text file | text file | Light (CRF 18) | 0.0000 +/- 0.0000 | 1.0000 +/- 0.0000 | 100.0% | 601 | 0.0000 |
-| video x text file | text file | Standard (CRF 23) | 0.0000 +/- 0.0000 | 1.0000 +/- 0.0000 | 100.0% | 0 | 0.0006 |
-| video x text file | text file | Heavy (CRF 28) | 0.0000 +/- 0.0000 | 1.0000 +/- 0.0000 | 100.0% | 0 | 0.0060 |
-| video x image | image | Light (CRF 18) | 0.0000 +/- 0.0000 | 1.0000 +/- 0.0000 | 100.0% | 234 | 0.0000 |
-| video x image | image | Standard (CRF 23) | 0.0000 +/- 0.0000 | 1.0000 +/- 0.0000 | 100.0% | 0 | 0.0006 |
-| video x image | image | Heavy (CRF 28) | 0.0000 +/- 0.0000 | 1.0000 +/- 0.0000 | 100.0% | 0 | 0.0060 |
+| video x text message | text message | Light (CRF 18) | 0.0000 +/- 0.0000 | 1.0000 +/- 0.0000 | 100.0% | 501 | 0.0000 |
+| video x text message | text message | Standard (CRF 23) | 0.0000 +/- 0.0000 | 1.0000 +/- 0.0000 | 100.0% | 501 | 0.0006 |
+| video x text message | text message | Heavy (CRF 28) | 0.0000 +/- 0.0000 | 1.0000 +/- 0.0000 | 100.0% | 501 | 0.0060 |
+| video x text file | text file | Light (CRF 18) | 0.0000 +/- 0.0000 | 1.0000 +/- 0.0000 | 100.0% | 501 | 0.0000 |
+| video x text file | text file | Standard (CRF 23) | 0.0000 +/- 0.0000 | 1.0000 +/- 0.0000 | 100.0% | 501 | 0.0006 |
+| video x text file | text file | Heavy (CRF 28) | 0.0000 +/- 0.0000 | 1.0000 +/- 0.0000 | 100.0% | 501 | 0.0060 |
+| video x image | image | Light (CRF 18) | 0.0000 +/- 0.0000 | 1.0000 +/- 0.0000 | 100.0% | 145 | 0.0000 |
+| video x image | image | Standard (CRF 23) | 0.0000 +/- 0.0000 | 1.0000 +/- 0.0000 | 100.0% | 145 | 0.0006 |
+| video x image | image | Heavy (CRF 28) | 0.0000 +/- 0.0000 | 1.0000 +/- 0.0000 | 100.0% | 145 | 0.0060 |
 | image x text message | text message | Light | 0.0000 +/- 0.0000 | 1.0000 +/- 0.0000 | 100.0% | 338 | 0.0000 |
 | image x text message | text message | Standard | 0.0000 +/- 0.0000 | 1.0000 +/- 0.0000 | 100.0% | 146 | 0.0005 |
 | image x text message | text message | Heavy | 0.0000 +/- 0.0000 | 1.0000 +/- 0.0000 | 100.0% | 0 | 0.0050 |
@@ -81,45 +81,45 @@ as a distinct preset for its channel re-encode analogue. `direct` scenario.
 
 | Combo | Payload | Carrier | Channel | [M] container B | [MO] capacity B | [M] PSNR dB | [M] SSIM | [M] BER +/- |
 |---|---|---|---|---|---|---|---|---|
-| video x text message | text message | Light (CRF 18) | No compression | 190 | 601 | 42.56 | 0.9780 | 0.0000 +/- 0.0000 |
-| video x text message | text message | Standard (CRF 23) | No compression | 190 | 0 | 41.65 | 0.9720 | 0.0000 +/- 0.0000 |
-| video x text message | text message | Heavy (CRF 28) | No compression | 190 | 0 | 39.80 | 0.9622 | 0.0000 +/- 0.0000 |
-| video x text file | text file | Light (CRF 18) | No compression | 243 | 601 | 42.49 | 0.9772 | 0.0000 +/- 0.0000 |
-| video x text file | text file | Standard (CRF 23) | No compression | 243 | 0 | 41.58 | 0.9712 | 0.0000 +/- 0.0000 |
-| video x text file | text file | Heavy (CRF 28) | No compression | 243 | 0 | 39.83 | 0.9615 | 0.0000 +/- 0.0000 |
-| video x image | image | Light (CRF 18) | No compression | 263 | 234 | 42.47 | 0.9771 | 0.0000 +/- 0.0000 |
-| video x image | image | Standard (CRF 23) | No compression | 263 | 0 | 41.54 | 0.9710 | 0.0000 +/- 0.0000 |
-| video x image | image | Heavy (CRF 28) | No compression | 263 | 0 | 39.80 | 0.9616 | 0.0000 +/- 0.0000 |
+| video x text message | text message | Light (CRF 18) | No compression | 190 | 501 | 42.56 | 0.9780 | 0.0000 +/- 0.0000 |
+| video x text message | text message | Standard (CRF 23) | No compression | 190 | 501 | 41.65 | 0.9720 | 0.0000 +/- 0.0000 |
+| video x text message | text message | Heavy (CRF 28) | No compression | 190 | 501 | 39.80 | 0.9622 | 0.0000 +/- 0.0000 |
+| video x text file | text file | Light (CRF 18) | No compression | 243 | 501 | 42.49 | 0.9772 | 0.0000 +/- 0.0000 |
+| video x text file | text file | Standard (CRF 23) | No compression | 243 | 501 | 41.58 | 0.9712 | 0.0000 +/- 0.0000 |
+| video x text file | text file | Heavy (CRF 28) | No compression | 243 | 501 | 39.83 | 0.9615 | 0.0000 +/- 0.0000 |
+| video x image | image | Light (CRF 18) | No compression | 263 | 145 | 42.47 | 0.9771 | 0.0000 +/- 0.0000 |
+| video x image | image | Standard (CRF 23) | No compression | 263 | 145 | 41.54 | 0.9710 | 0.0000 +/- 0.0000 |
+| video x image | image | Heavy (CRF 28) | No compression | 263 | 145 | 39.80 | 0.9616 | 0.0000 +/- 0.0000 |
 | image x text message | text message | Light | No compression | 217 | 338 | 20.83 | 0.6322 | 0.0000 +/- 0.0000 |
 | image x text message | text message | Standard | No compression | 196 | 146 | 14.74 | 0.5414 | 0.0000 +/- 0.0000 |
 | image x text message | text message | Heavy | No compression | 158 | 0 | 23.29 | 0.6818 | 0.0000 +/- 0.0000 |
 | image x text file | text file | Light | No compression | 307 | 242 | 20.01 | 0.5688 | 0.0000 +/- 0.0000 |
 | image x text file | text file | Standard | No compression | 259 | 50 | 14.15 | 0.4852 | 0.0000 +/- 0.0000 |
 | image x text file | text file | Heavy | No compression | 163 | 0 | 23.73 | 0.6833 | 0.0000 +/- 0.0000 |
-| video x text message | text message | Light (CRF 18) | Chat standard | 190 | 601 | 42.56 | 0.9780 | 0.0000 +/- 0.0000 |
-| video x text message | text message | Standard (CRF 23) | Chat standard | 190 | 0 | 41.65 | 0.9720 | 0.0000 +/- 0.0000 |
-| video x text message | text message | Heavy (CRF 28) | Chat standard | 190 | 0 | 39.80 | 0.9622 | 0.0000 +/- 0.0000 |
-| video x text file | text file | Light (CRF 18) | Chat standard | 227 | 811 | 42.52 | 0.9775 | 0.0000 +/- 0.0000 |
-| video x text file | text file | Standard (CRF 23) | Chat standard | 227 | 0 | 41.59 | 0.9713 | 0.0000 +/- 0.0000 |
-| video x text file | text file | Heavy (CRF 28) | Chat standard | 227 | 0 | 39.77 | 0.9614 | 0.0000 +/- 0.0000 |
-| video x image | image | Light (CRF 18) | Chat standard | 263 | 234 | 42.47 | 0.9771 | 0.0000 +/- 0.0000 |
-| video x image | image | Standard (CRF 23) | Chat standard | 263 | 0 | 41.54 | 0.9710 | 0.0000 +/- 0.0000 |
-| video x image | image | Heavy (CRF 28) | Chat standard | 263 | 0 | 39.80 | 0.9616 | 0.0000 +/- 0.0000 |
+| video x text message | text message | Light (CRF 18) | Chat standard | 190 | 501 | 42.56 | 0.9780 | 0.0000 +/- 0.0000 |
+| video x text message | text message | Standard (CRF 23) | Chat standard | 190 | 501 | 41.65 | 0.9720 | 0.0000 +/- 0.0000 |
+| video x text message | text message | Heavy (CRF 28) | Chat standard | 190 | 501 | 39.80 | 0.9622 | 0.0000 +/- 0.0000 |
+| video x text file | text file | Light (CRF 18) | Chat standard | 227 | 575 | 42.52 | 0.9775 | 0.0000 +/- 0.0000 |
+| video x text file | text file | Standard (CRF 23) | Chat standard | 227 | 575 | 41.59 | 0.9713 | 0.0000 +/- 0.0000 |
+| video x text file | text file | Heavy (CRF 28) | Chat standard | 227 | 575 | 39.77 | 0.9614 | 0.0000 +/- 0.0000 |
+| video x image | image | Light (CRF 18) | Chat standard | 263 | 145 | 42.47 | 0.9771 | 0.0000 +/- 0.0000 |
+| video x image | image | Standard (CRF 23) | Chat standard | 263 | 145 | 41.54 | 0.9710 | 0.0000 +/- 0.0000 |
+| video x image | image | Heavy (CRF 28) | Chat standard | 263 | 145 | 39.80 | 0.9616 | 0.0000 +/- 0.0000 |
 | image x text message | text message | Light | Chat standard | 212 | 338 | 21.14 | 0.6400 | 0.0000 +/- 0.0000 |
 | image x text message | text message | Standard | Chat standard | 193 | 146 | 14.80 | 0.5432 | 0.0000 +/- 0.0000 |
 | image x text message | text message | Heavy | Chat standard | 158 | 0 | 23.29 | 0.6818 | 0.0000 +/- 0.0000 |
 | image x text file | text file | Light | Chat standard | 278 | 326 | 20.21 | 0.5859 | 0.0000 +/- 0.0000 |
 | image x text file | text file | Standard | Chat standard | 220 | 67 | 14.41 | 0.5333 | 0.0000 +/- 0.0000 |
 | image x text file | text file | Heavy | Chat standard | 163 | 0 | 23.73 | 0.6833 | 0.0000 +/- 0.0000 |
-| video x text message | text message | Light (CRF 18) | Chat HD | 190 | 601 | 42.56 | 0.9780 | 0.0000 +/- 0.0000 |
-| video x text message | text message | Standard (CRF 23) | Chat HD | 190 | 0 | 41.65 | 0.9720 | 0.0000 +/- 0.0000 |
-| video x text message | text message | Heavy (CRF 28) | Chat HD | 190 | 0 | 39.80 | 0.9622 | 0.0000 +/- 0.0000 |
-| video x text file | text file | Light (CRF 18) | Chat HD | 227 | 811 | 42.52 | 0.9775 | 0.0000 +/- 0.0000 |
-| video x text file | text file | Standard (CRF 23) | Chat HD | 227 | 0 | 41.59 | 0.9713 | 0.0000 +/- 0.0000 |
-| video x text file | text file | Heavy (CRF 28) | Chat HD | 227 | 0 | 39.77 | 0.9614 | 0.0000 +/- 0.0000 |
-| video x image | image | Light (CRF 18) | Chat HD | 263 | 234 | 42.47 | 0.9771 | 0.0000 +/- 0.0000 |
-| video x image | image | Standard (CRF 23) | Chat HD | 263 | 0 | 41.54 | 0.9710 | 0.0000 +/- 0.0000 |
-| video x image | image | Heavy (CRF 28) | Chat HD | 263 | 0 | 39.80 | 0.9616 | 0.0000 +/- 0.0000 |
+| video x text message | text message | Light (CRF 18) | Chat HD | 190 | 501 | 42.56 | 0.9780 | 0.0000 +/- 0.0000 |
+| video x text message | text message | Standard (CRF 23) | Chat HD | 190 | 501 | 41.65 | 0.9720 | 0.0000 +/- 0.0000 |
+| video x text message | text message | Heavy (CRF 28) | Chat HD | 190 | 501 | 39.80 | 0.9622 | 0.0000 +/- 0.0000 |
+| video x text file | text file | Light (CRF 18) | Chat HD | 227 | 575 | 42.52 | 0.9775 | 0.0000 +/- 0.0000 |
+| video x text file | text file | Standard (CRF 23) | Chat HD | 227 | 575 | 41.59 | 0.9713 | 0.0000 +/- 0.0000 |
+| video x text file | text file | Heavy (CRF 28) | Chat HD | 227 | 575 | 39.77 | 0.9614 | 0.0000 +/- 0.0000 |
+| video x image | image | Light (CRF 18) | Chat HD | 263 | 145 | 42.47 | 0.9771 | 0.0000 +/- 0.0000 |
+| video x image | image | Standard (CRF 23) | Chat HD | 263 | 145 | 41.54 | 0.9710 | 0.0000 +/- 0.0000 |
+| video x image | image | Heavy (CRF 28) | Chat HD | 263 | 145 | 39.80 | 0.9616 | 0.0000 +/- 0.0000 |
 | image x text message | text message | Light | Chat HD | 212 | 338 | 21.14 | 0.6400 | 0.0000 +/- 0.0000 |
 | image x text message | text message | Standard | Chat HD | 193 | 146 | 14.80 | 0.5432 | 0.0000 +/- 0.0000 |
 | image x text message | text message | Heavy | Chat HD | 158 | 0 | 23.29 | 0.6818 | 0.0000 +/- 0.0000 |
@@ -140,7 +140,7 @@ runtime is dominated by the codec (see `compression_report.md`).
 - **image x text file (light carrier):** NO_COMPRESSION container 307 B vs CHAT_STANDARD 278 B -- uncompressed is **+10.4%** the size for the same payload.
   Modeled TEXT_FILE capacity: NO_COMPRESSION 242 B vs CHAT_STANDARD 326 B (**+34.7%** via the 1.35x DEFLATE factor).
 - **video x text file (light carrier):** NO_COMPRESSION container 243 B vs CHAT_STANDARD 227 B -- uncompressed is **+7.0%** the size for the same payload.
-  Modeled TEXT_FILE capacity: NO_COMPRESSION 601 B vs CHAT_STANDARD 811 B (**+34.9%** via the 1.35x DEFLATE factor).
+  Modeled TEXT_FILE capacity: NO_COMPRESSION 501 B vs CHAT_STANDARD 575 B (**+14.8%** via the 1.35x DEFLATE factor).
 
 ### 3.2 Direct-extract integrity across presets
 

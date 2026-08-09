@@ -1,13 +1,16 @@
 import { useRef, useState, type ChangeEvent, type DragEvent, type ReactNode, type RefObject } from "react";
 import { Check, FileImage, FileText, Film, Upload, X } from "lucide-react";
 import { formatBytes, formatDuration } from "@/lib/format";
+import { classifyFile, type Modality } from "@/lib/file-classify";
 
-export type DropFileKind = "image" | "video" | "text";
+export type DropFileKind = Modality;
 
 export interface DropFile {
   file: File;
   url: string;
   kind: DropFileKind;
+  /** Concrete format token from magic-byte sniffing, e.g. "png" | "mp4". */
+  format?: string;
   width?: number;
   height?: number;
   durationSec?: number;
@@ -15,9 +18,9 @@ export interface DropFile {
 }
 
 const KIND_ACCEPT: Record<DropFileKind, string> = {
-  image: "image/png,image/jpeg,image/webp,image/bmp,image/gif",
-  video: "video/mp4,video/webm,video/quicktime,video/x-matroska,video/ogg",
-  text: "text/plain,text/markdown,text/html,application/json,text/csv,.txt,.md,.html",
+  image: "image/png,image/jpeg,image/webp,image/bmp,image/gif,.png,.jpg,.jpeg,.webp,.bmp,.gif",
+  video: "video/mp4,video/webm,video/quicktime,video/x-matroska,video/ogg,.mp4,.webm,.mov,.mkv,.m4v,.ogv",
+  text: "text/plain,text/markdown,text/html,application/json,text/csv,.txt,.md,.html,.json,.csv,.log",
 };
 
 const KIND_BADGES: Record<DropFileKind, string[]> = {
@@ -32,18 +35,9 @@ const KIND_ICON: Record<DropFileKind, ReactNode> = {
   text: <FileText size={16} />,
 };
 
-function detectKind(file: File, allowed: DropFileKind[]): DropFileKind | null {
-  const mime = file.type.toLowerCase();
-  const name = file.name.toLowerCase();
-  if (allowed.includes("image") && mime.startsWith("image/")) return "image";
-  if (allowed.includes("video") && mime.startsWith("video/")) return "video";
-  if (allowed.includes("text") && (mime.startsWith("text/") || mime === "application/json" || /\.(txt|md|html|json|csv)$/.test(name))) return "text";
-  return null;
-}
-
-function buildDropFile(file: File, kind: DropFileKind): Promise<DropFile> {
+function buildDropFile(file: File, kind: DropFileKind, format?: string): Promise<DropFile> {
   const url = URL.createObjectURL(file);
-  const base = { file, url, kind };
+  const base: DropFile = { file, url, kind, format };
   if (kind === "image") {
     return new Promise((resolve) => {
       const image = new Image();
@@ -94,7 +88,7 @@ function FilePreview({
   onClear: () => void;
   onReplace: () => void;
   inputRef: RefObject<HTMLInputElement | null>;
-  onSelect: (file: File) => void;
+  onSelect: (file: File, resetInput: () => void) => void;
   accept: string;
   testIdPrefix: string;
   inputTestId: string;
@@ -120,7 +114,17 @@ function FilePreview({
           <button onClick={onClear} className="remove-link" data-testid={`button-remove-${testIdPrefix}`}><X size={13} /> Remove</button>
         </div>
       </div>
-      <input ref={inputRef} type="file" accept={accept} onChange={(event) => event.target.files?.[0] && onSelect(event.target.files[0])} hidden data-testid={inputTestId} />
+      <input
+        ref={inputRef}
+        type="file"
+        accept={accept}
+        onChange={(event) => {
+          const el = event.target;
+          if (el.files?.[0]) onSelect(el.files[0], () => { el.value = ""; });
+        }}
+        hidden
+        data-testid={inputTestId}
+      />
     </div>
   );
 }
@@ -129,6 +133,8 @@ interface FileDropZoneProps {
   selected: DropFile | null;
   onSelect: (file: DropFile) => void;
   onClear: () => void;
+  /** Called with a user-facing reason when a dropped file is rejected. */
+  onReject?: (reason: string) => void;
   headline: string;
   subline: string;
   cta: string;
@@ -145,6 +151,7 @@ function FileDropZone({
   selected,
   onSelect,
   onClear,
+  onReject,
   headline,
   subline,
   cta,
@@ -162,13 +169,35 @@ function FileDropZone({
   const badges = formats ?? kinds.flatMap((kind) => KIND_BADGES[kind]);
   const resolvedInputTestId = inputTestId ?? `input-file-${testIdPrefix}`;
   const resolvedPreviewTestId = previewTestId ?? `preview-file-${testIdPrefix}`;
-  const process = (file?: File) => {
-    if (!file) return;
-    const kind = detectKind(file, kinds);
-    if (!kind) return;
-    void buildDropFile(file, kind).then(onSelect);
+
+  /**
+   * Classify + accept a picked file. Uses magic-byte sniffing (not just MIME),
+   * surfaces a visible reason on rejection instead of silently ignoring the
+   * file, and ALWAYS clears the input value afterwards so re-selecting the same
+   * file (e.g. after a failed encode) fires a fresh change event.
+   */
+  const process = (file: File | undefined, resetInput?: () => void) => {
+    if (!file) {
+      resetInput?.();
+      return;
+    }
+    void classifyFile(file, kinds)
+      .then(async (res) => {
+        if (res.ok && res.modality) {
+          const dropFile = await buildDropFile(file, res.modality, res.format);
+          onSelect(dropFile);
+        } else {
+          onReject?.(res.reason ?? "Unsupported file.");
+        }
+      })
+      .catch(() => onReject?.("Could not read that file."))
+      .finally(() => resetInput?.());
   };
-  const handleChange = (event: ChangeEvent<HTMLInputElement>) => process(event.target.files?.[0]);
+
+  const handleChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const el = event.target;
+    process(el.files?.[0], () => { el.value = ""; });
+  };
   const handleDrop = (event: DragEvent<HTMLDivElement>) => {
     event.preventDefault();
     setDragging(false);
@@ -204,7 +233,7 @@ function FileDropZone({
           onClear={onClear}
           onReplace={() => inputRef.current?.click()}
           inputRef={inputRef}
-          onSelect={process}
+          onSelect={(file, reset) => process(file, reset)}
           accept={accept}
           testIdPrefix={testIdPrefix}
           inputTestId={resolvedInputTestId}

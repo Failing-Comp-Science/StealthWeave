@@ -29,35 +29,67 @@ export default function DecodePage() {
   const [error, setError] = useState<{ title: string; message: string } | null>(null);
   const [copied, setCopied] = useState(false);
   const payloadUrlRef = useRef<string | null>(null);
+  const decodeId = useRef(0);
+  const decodeAbort = useRef<AbortController | null>(null);
 
-  useEffect(() => () => { if (payloadUrlRef.current) URL.revokeObjectURL(payloadUrlRef.current); }, []);
+  useEffect(() => () => {
+    decodeAbort.current?.abort();
+    if (payloadUrlRef.current) URL.revokeObjectURL(payloadUrlRef.current);
+  }, []);
 
   const revokePayloadUrl = () => { if (payloadUrlRef.current) { URL.revokeObjectURL(payloadUrlRef.current); payloadUrlRef.current = null; } };
 
+  const rejectFile = (reason: string) => {
+    setError({ title: "Unsupported file", message: reason });
+    toast({ variant: "destructive", title: "Unsupported file", description: reason });
+  };
+
   const selectStego = (file: DropFile) => {
+    decodeAbort.current?.abort();
+    decodeId.current += 1;
     setStego((prev) => { if (prev) URL.revokeObjectURL(prev.url); return file; });
     setResult(null); setPhase("idle"); setProgress(null); setError(null); revokePayloadUrl();
   };
-  const clearStego = () => { if (stego) URL.revokeObjectURL(stego.url); setStego(null); setResult(null); setPhase("idle"); setError(null); revokePayloadUrl(); };
+  const clearStego = () => {
+    decodeAbort.current?.abort();
+    decodeId.current += 1;
+    if (stego) URL.revokeObjectURL(stego.url);
+    setStego(null); setResult(null); setPhase("idle"); setError(null); revokePayloadUrl();
+  };
 
   const running = phase === "uploading" || phase === "reading" || phase === "decrypting" || phase === "extracting";
   const canDecode = !!stego && !running && phase !== "done";
 
   const runDecode = async () => {
     if (!stego) return;
+    decodeAbort.current?.abort();
+    const controller = new AbortController();
+    decodeAbort.current = controller;
+    const reqId = ++decodeId.current;
     setPhase("uploading"); setProgress(null); setResult(null); setError(null); revokePayloadUrl();
     try {
-      const res = await runExtract(stego, password, (p) => { setProgress(p); setPhase(p.stage); });
+      const res = await runExtract(
+        stego,
+        password,
+        (p) => { if (decodeId.current === reqId) { setProgress(p); setPhase(p.stage); } },
+        controller.signal,
+      );
+      if (decodeId.current !== reqId) return; // superseded by a newer request
       if (res.fileBlob) payloadUrlRef.current = URL.createObjectURL(res.fileBlob);
       setResult(res);
       setPhase("done");
       toast({ title: "Extract complete", description: `${res.fileName} recovered.` });
     } catch (err) {
+      if (err instanceof StegoApiError && err.code === "ABORTED") return;
+      if (decodeId.current !== reqId) return;
+      setResult(null); setProgress(null); revokePayloadUrl();
       setPhase("error");
       const message = err instanceof Error ? err.message : "Extraction failed";
       const title = err instanceof StegoApiError && /wrong key|password|decrypt/i.test(message) ? ERROR_TITLE.wrong_password : "Extraction failed";
       setError({ title, message });
       toast({ variant: "destructive", title, description: message });
+    } finally {
+      if (decodeAbort.current === controller) decodeAbort.current = null;
     }
   };
 
@@ -94,6 +126,7 @@ export default function DecodePage() {
             selected={stego}
             onSelect={selectStego}
             onClear={clearStego}
+            onReject={rejectFile}
             headline="Bring the carrier back"
             subline="Select the image or video that holds a hidden layer."
             cta="Drop the encoded file here"
@@ -121,9 +154,16 @@ export default function DecodePage() {
 
           {/* 03 — Action + determinate progress */}
           {!running && phase !== "done" && (
-            <button className="button button-primary action-button" disabled={!canDecode} onClick={runDecode} data-testid="button-decode">
-              <ScanLine size={16} /> Extract payload from carrier <ArrowRight size={15} />
-            </button>
+            <div className="action-row">
+              <button className="button button-primary action-button" disabled={!canDecode} onClick={runDecode} data-testid="button-decode">
+                <ScanLine size={16} /> Extract payload from carrier <ArrowRight size={15} />
+              </button>
+              {error && (
+                <button className="button button-ghost reset-button" onClick={reset} data-testid="button-reset-decode">
+                  <Plus size={15} /> Start over
+                </button>
+              )}
+            </div>
           )}
           {phase === "done" && (
             <button className="button button-ghost reset-button" onClick={reset} data-testid="button-another-decode"><Plus size={15} /> Decode another file</button>

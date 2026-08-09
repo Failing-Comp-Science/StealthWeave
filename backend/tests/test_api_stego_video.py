@@ -30,7 +30,10 @@ TEXT = "Hidden message from the video cover." * 2
 @pytest.fixture(scope="module")
 def video_cover_path():
     frames = []
-    height, width, fps, seconds = 240, 320, 24, 2
+    # 3 seconds (gop 24 -> 3 I-frames) gives the heavy/CRF-28 closed loop enough
+    # carrier margin to converge deterministically; a 2s cover left the pool ~70%
+    # utilized, which was marginal under random crypto nonces (documented flake).
+    height, width, fps, seconds = 240, 320, 24, 3
     for i in range(fps * seconds):
         yy, xx = np.mgrid[0:height, 0:width]
         phase = i / 3.0
@@ -209,9 +212,11 @@ def test_video_encode_bad_preset_400(video_cover_bytes):
 
 
 def test_video_encode_payload_too_large_400(video_cover_bytes):
+    # The encoder limit for this cover is ~183 * 72 = 13 KB.
+    # Use a very large multiplier to guarantee exceeding capacity.
     r = client.post(
         ENCODE_URL,
-        data={"payload_type": "TEXT_MESSAGE", "preset": "heavy", "password": "pw", "message": TEXT * 40},
+        data={"payload_type": "TEXT_MESSAGE", "preset": "heavy", "password": "pw", "message": TEXT * 1000},
         files={"cover": ("cover.mp4", video_cover_bytes, "video/mp4")},
     )
     assert r.status_code == 400
@@ -289,3 +294,71 @@ def test_video_endpoint_wrong_password(video_cover_bytes):
         )
         assert d.status_code == 400
         assert "recover" in d.json()["detail"].lower()
+
+
+# ---------------------------------------------------------------------------
+# Carrier preset + payload compression precedence on the video endpoints
+# ---------------------------------------------------------------------------
+
+def test_video_explicit_no_compression_wins_over_chat_hd_default(video_cover_bytes):
+    # chat_hd's carrier default is DEFLATE; the explicit choice must win.
+    with tempfile.TemporaryDirectory() as td:
+        r = client.post(
+            V_ENCODE_URL,
+            data={"payload_type": "TEXT_MESSAGE", "message": TEXT,
+                  "carrier_preset": "chat_hd", "payload_compression": "NO_COMPRESSION",
+                  "compress": "false"},
+            files={"cover": ("cover.mp4", video_cover_bytes, "video/mp4")},
+        )
+        stego_path = _stego_path(r)
+        d = client.post(
+            V_DECODE_URL,
+            data={},
+            files={"stego": ("stego.mp4", open(stego_path, "rb"), "video/mp4")},
+        )
+        assert d.status_code == 200, d.text
+        body = d.json()
+        assert body["message"] == TEXT
+        assert body["compressed"] is False
+
+
+def test_video_carrier_default_applies_when_field_absent(video_cover_bytes):
+    # No payload_compression + explicit non-default carrier -> carrier default
+    # (chat_hd -> DEFLATE), even though the legacy compress flag says false.
+    with tempfile.TemporaryDirectory() as td:
+        r = client.post(
+            V_ENCODE_URL,
+            data={"payload_type": "TEXT_MESSAGE", "message": TEXT,
+                  "carrier_preset": "chat_hd", "compress": "false"},
+            files={"cover": ("cover.mp4", video_cover_bytes, "video/mp4")},
+        )
+        stego_path = _stego_path(r)
+        d = client.post(
+            V_DECODE_URL,
+            data={},
+            files={"stego": ("stego.mp4", open(stego_path, "rb"), "video/mp4")},
+        )
+        assert d.status_code == 200, d.text
+        assert d.json()["compressed"] is True
+
+
+def test_video_lossless_carrier_roundtrip(video_cover_bytes):
+    # lossless_high_capacity -> CRF 18, default payload compression
+    # NO_COMPRESSION; must round-trip exactly.
+    with tempfile.TemporaryDirectory() as td:
+        r = client.post(
+            V_ENCODE_URL,
+            data={"payload_type": "TEXT_MESSAGE", "message": TEXT,
+                  "carrier_preset": "lossless_high_capacity"},
+            files={"cover": ("cover.mp4", video_cover_bytes, "video/mp4")},
+        )
+        stego_path = _stego_path(r)
+        d = client.post(
+            V_DECODE_URL,
+            data={},
+            files={"stego": ("stego.mp4", open(stego_path, "rb"), "video/mp4")},
+        )
+        assert d.status_code == 200, d.text
+        body = d.json()
+        assert body["message"] == TEXT
+        assert body["compressed"] is False

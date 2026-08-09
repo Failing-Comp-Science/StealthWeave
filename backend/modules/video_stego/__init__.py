@@ -9,8 +9,10 @@ Public entry points:
 from .engine import (
     DELTA_BY_CRF,
     EmbedStats,
+    VideoCapacityError,
     VideoEmbedError,
     VideoEmbedder,
+    VideoNoIFramesError,
     embed_video,
     extract_video,
 )
@@ -20,6 +22,8 @@ __all__ = [
     "extract_video",
     "VideoEmbedder",
     "VideoEmbedError",
+    "VideoCapacityError",
+    "VideoNoIFramesError",
     "EmbedStats",
     "DELTA_BY_CRF",
 ]
