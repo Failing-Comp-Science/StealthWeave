@@ -85,7 +85,7 @@ class TestResolution:
         )
         assert cfg.preset_id == UnifiedPresetId.CHAT_STANDARD
         assert cfg.label == "Chat Standard"
-        assert cfg.engine == "jpeg_dct_qim"
+        assert cfg.engine == "spatial_lsb"
         assert cfg.jpeg_quality == 75
         assert cfg.video_crf == 28
         assert cfg.image_derate == 0.4
@@ -110,8 +110,8 @@ class TestResolution:
     def test_engine_selection_is_format_driven(self):
         assert resolve_preset("LOSSLESS", "image", "png", "TEXT_MESSAGE").engine == "spatial_lsb"
         assert resolve_preset("LOSSLESS", "image", "bmp", "TEXT_MESSAGE").engine == "spatial_lsb"
-        assert resolve_preset("LOSSLESS", "image", "jpeg", "TEXT_MESSAGE").engine == "jpeg_dct_qim"
-        assert resolve_preset("LOSSLESS", "image", "webp", "TEXT_MESSAGE").engine == "jpeg_dct_qim"
+        assert resolve_preset("LOSSLESS", "image", "jpeg", "TEXT_MESSAGE").engine == "spatial_lsb"
+        assert resolve_preset("LOSSLESS", "image", "webp", "TEXT_MESSAGE").engine == "spatial_lsb"
         assert resolve_preset("LOSSLESS", "video", "mp4", "TEXT_FILE").engine == "video_iframe_dct_qim"
 
     def test_compression_requested_defaults_from_policy(self):
@@ -134,8 +134,9 @@ class TestResolution:
             resolve_preset("LOSSLESS", "audio", "mp3", "TEXT_MESSAGE")
         with pytest.raises(ValueError):
             resolve_preset("LOSSLESS", "video", "png", "TEXT_MESSAGE")
-        with pytest.raises(ValueError):
-            resolve_preset("LOSSLESS", "image", "jpeg", "IMAGE")
+        cfg = resolve_preset("LOSSLESS", "image", "jpeg", "IMAGE")
+        assert cfg.payload_type == "IMAGE"
+        assert cfg.engine == "spatial_lsb"
 
 
 class TestLegacyQfCrfMapping:

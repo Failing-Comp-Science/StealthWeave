@@ -10,11 +10,12 @@
  *
  * Phase 1 (fast cover detection):
  * - Payload-type options are derived CLIENT-SIDE from the cover modality
- *   (image -> [text, text-file]; video -> [text, text-file, image]) so step 02
+ *   (image -> [text, text-file, image]; video -> [text, text-file, image]) so step 02
  *   renders immediately — no payload-analyzing network gate.
- * - PNG/BMP capacity is computed CLIENT-SIDE (instant, exact spatial-LSB model
- *   from `stego/capacity.ts`); no network round trip.
- * - JPEG/video capacity still hits the server, but results are CACHED keyed by
+ * - Raster image capacity (PNG/BMP/JPEG/WebP/GIF) is computed CLIENT-SIDE
+ *   (instant, exact spatial-LSB model from `stego/capacity.ts`); JPEG is
+ *   treated as a pixel raster that will be saved as PNG.
+ * - Video capacity still hits the server, but results are CACHED keyed by
  *   `kind|format|size|header16hash`, requests are ABORTABLE, and video probes
  *   get a 10s client-side timeout (`CapacityTimeoutError`).
  *
@@ -40,6 +41,8 @@ import {
 import type { DropFile } from "@/components/instrument/file-drop-zone";
 import type { CompressionPreset, PayloadType, UnifiedPresetId } from "@/lib/encode-decode-mock";
 import { computeSpatialCapacity, type SpatialCapacityRow } from "@/lib/stego/capacity";
+import { decodeImageToRgb } from "@/lib/stego/image";
+import { isSpatialImageFormat } from "@/lib/stego/spatial-formats";
 
 /** Error the pages can surface via Toast/Alert (carries server 400 detail). */
 export class CapacityError extends Error {
@@ -78,14 +81,13 @@ function nn(value: number | null | undefined): number {
 }
 
 /** Payload types a cover of this modality supports (client-side, Phase 1). */
-export function payloadTypesFor(kind: string): PayloadType[] {
-  return kind === "video" ? ["text", "text-file", "image"] : ["text", "text-file"];
+export function payloadTypesFor(_kind: string): PayloadType[] {
+  return ["text", "text-file", "image"];
 }
 
-/** PNG/BMP covers ride the instant, client-side spatial-LSB model. */
+/** Raster image covers use the instant client-side spatial-LSB model. */
 function isSpatialCover(drop: DropFile): boolean {
-  const format = (drop.format ?? "").toLowerCase();
-  return (format === "png" || format === "bmp") && typeof drop.width === "number" && typeof drop.height === "number";
+  return drop.kind === "image" && isSpatialImageFormat(drop.format);
 }
 
 /**
@@ -108,7 +110,7 @@ function toUiPreset(
       ? {
           text: nn(preset.max_bytes_text_message),
           "text-file": nn(preset.max_bytes_text_file),
-          image: 0,
+          image: nn(preset.max_bytes_image),
         }
       : {
           text: Math.floor(nn(preset.max_bytes_per_minute_text_message) * minutes),
@@ -135,7 +137,7 @@ function toUiSpatialPreset(row: SpatialCapacityRow): CompressionPreset {
     maxBytesForPayload: {
       text: row.max_bytes_text_message,
       "text-file": row.max_bytes_text_file,
-      image: 0,
+      image: row.max_bytes_image,
     },
     expectedBer: row.expected_ber,
     survivabilityDescription: row.survivability_description,
@@ -207,10 +209,20 @@ async function fetchAnalysis(
   return { cover: drop, presets, payloadTypes: payloadTypesFor(coverKind) };
 }
 
-/** Instant client-side spatial capacity for PNG/BMP covers. */
-function spatialAnalysis(drop: DropFile): CoverAnalysis {
-  const presets = [toUiSpatialPreset(computeSpatialCapacity(drop.height!, drop.width!))];
+/** Instant client-side spatial capacity for raster image covers. */
+function spatialAnalysis(drop: DropFile, width: number, height: number): CoverAnalysis {
+  const presets = [toUiSpatialPreset(computeSpatialCapacity(height, width))];
   return { cover: drop, presets, payloadTypes: payloadTypesFor("image") };
+}
+
+async function spatialAnalysisWithDims(drop: DropFile): Promise<CoverAnalysis> {
+  if (typeof drop.width === "number" && typeof drop.height === "number") {
+    return spatialAnalysis(drop, drop.width, drop.height);
+  }
+  const decoded = await decodeImageToRgb(drop.file);
+  drop.width = decoded.width;
+  drop.height = decoded.height;
+  return spatialAnalysis(drop, decoded.width, decoded.height);
 }
 
 const VIDEO_TIMEOUT_MS = 10_000;
@@ -222,7 +234,7 @@ function linkAbort(target: AbortController, signals: (AbortSignal | undefined)[]
 }
 
 /**
- * Server capacity probe for JPEG/video covers. Video gets a 10s client-side
+ * Server capacity probe for video covers. Video gets a 10s client-side
  * timeout (the server full-decodes the clip to count I-frames): on timeout the
  * fetch is aborted and ``CapacityTimeoutError`` is raised so the page can keep
  * Encode enabled and let the server re-verify fit at encode time.
@@ -251,17 +263,17 @@ async function networkAnalysis(
 /**
  * Analyze a cover: payload options (client-side) + capacity.
  *
- * PNG/BMP -> instant client-side model, no network. JPEG/video -> one cached
- * server call (abortable via ``opts.signal``); video probes get a 10s
- * client-side timeout surfaced as ``CapacityTimeoutError``. Successful results
- * are cached keyed by ``kind|format|size|header16hash``; timeouts are not.
+ * Raster images -> instant client-side spatial model, no network. Video ->
+ * one cached server call (abortable via ``opts.signal``); video probes get a
+ * 10s client-side timeout surfaced as ``CapacityTimeoutError``. Successful
+ * results are cached keyed by ``kind|format|size|header16hash``; timeouts are not.
  */
 export async function analyzeCover(
   drop: DropFile,
   opts?: { signal?: AbortSignal },
 ): Promise<CoverAnalysis> {
   if (isSpatialCover(drop)) {
-    return spatialAnalysis(drop);
+    return spatialAnalysisWithDims(drop);
   }
 
   const key = await coverCacheKey(drop);

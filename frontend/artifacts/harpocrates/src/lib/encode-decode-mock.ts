@@ -40,7 +40,7 @@ export const UNIFIED_PRESETS: UnifiedPreset[] = [
     id: "LOSSLESS",
     label: "Lossless",
     description:
-      "For pendrives, disks, LAN, archives and direct file copies — maximum capacity with byte-exact extraction. PNG/BMP covers use lossless LSB; JPEG covers use the highest DCT quality (QF 95); video uses CRF 18 (near-lossless).",
+      "For pendrives, disks, LAN, archives and direct file copies — maximum capacity with byte-exact extraction. Image covers (PNG, BMP, JPEG, WebP, GIF) use lossless spatial LSB and always download as PNG. Video uses CRF 18 (near-lossless).",
     engineTier: "light",
     compressionPolicyLabel: "DEFLATE (IF SMALLER)",
     warnings: [
@@ -57,10 +57,9 @@ export function getUnifiedPresetLabel(id: string): string {
 
 /**
  * Map the LOSSLESS preset onto the engine tier the /api/stego/capacity
- * response reports. PNG/BMP covers ride the lossless spatial (LSB) engine,
- * which is preset-independent: the response carries only the
- * `lossless_high_capacity` row. JPEG/video resolve onto the "light" tier
- * (QF95/CRF18).
+ * response reports. Raster image covers ride the lossless spatial (LSB)
+ * engine, which is preset-independent: the response carries only the
+ * `lossless_high_capacity` row. Video resolves onto the "light" tier (CRF18).
  */
 export function unifiedPresetToTierId(preset: string, tierIds: string[]): string | null {
   if (tierIds.includes("lossless_high_capacity")) return "lossless_high_capacity";
@@ -98,6 +97,7 @@ export interface ExtractResult {
   fileName: string;
   fileSize: number;
   fileBlob?: Blob;
+  mimeType?: string;
   algorithm: string;
   encrypted: boolean;
   magic: string;

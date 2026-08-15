@@ -8,8 +8,7 @@ Endpoints:
 
 Encode/decode dispatch on cover type:
 
-* IMAGE covers use the block-based DCT-QIM engine
-  (``modules.capacity.dct_embedder``) for TEXT_MESSAGE / TEXT_FILE payloads.
+* IMAGE covers use lossless LSB (PNG/BMP/JPEG/WebP/GIF decoded to RGB, PNG out).
 * VIDEO covers use the I-frame DCT-QIM engine
   (``modules.video_stego.engine``) with an H.264 CRF re-encode, for
   TEXT_MESSAGE / TEXT_FILE / IMAGE payloads.
@@ -42,10 +41,8 @@ from modules.base import HEADER_VERSION_V2
 from modules.capacity import (
     AccountingBreakdown,
     compute_accounting_breakdown,
-    image_capacity,
     spatial_capacity,
     video_capacity,
-    carrier_preset_to_image_qf,
     carrier_preset_to_video_crf,
     carrier_preset_to_payload_compression_default,
     carrier_preset_to_lsb_bpc,
@@ -86,6 +83,10 @@ from app.core.errors import StegoError
 from app.models.stego import (
     ALLOWED_PAYLOADS,
     KNOWN_PAYLOAD_TOKENS,
+    AnalyzeDetectorResult,
+    AnalyzeResponse,
+    HstgHeaderScan,
+    SequentialWsResult,
     CapacityResponse,
     CarrierPreset,
     CompressionPreset,
@@ -444,14 +445,9 @@ async def stego_capacity(
 
     if cover_type == CoverType.IMAGE:
         rgb = _decode_image(data)
-        # PNG/BMP covers ride the lossless spatial (LSB) engine, whose capacity
-        # is orders of magnitude larger than the JPEG model's claim for the
-        # same cover; JPEG (and other formats) keep the block DCT-QIM model.
-        engine = _detect_image_engine_lenient(data)
-        if engine == "lsb":
-            presets = spatial_capacity(rgb, compression_preset=container_preset)
-        else:
-            presets = image_capacity(rgb, compression_preset=container_preset)
+        # Raster covers (PNG/BMP/JPEG/WebP/GIF) use lossless spatial LSB.
+        # JPEG is decoded to pixels; capacity is the same spatial budget as PNG.
+        presets = spatial_capacity(rgb, compression_preset=container_preset)
     else:
         suffix = os.path.splitext(cover.filename or "")[1] or ".mp4"
         tmp_path = None
@@ -729,7 +725,7 @@ async def _assemble_payload(
         fname = os.path.basename(payload_file.filename or "payload")
         mime = payload_file.content_type or "application/octet-stream"
         return payload_bytes, ContainerPayloadType.TEXT_FILE, fname, mime
-    # IMAGE payload (video covers only; the _validate_combo matrix rejects it elsewhere)
+    # IMAGE payload (image or video cover; the _validate_combo matrix rejects others)
     if payload_image is None or not (payload_image.filename or "").strip():
         raise StegoError(StegoErrorCode.PAYLOAD_MISSING, "IMAGE payload requires a 'payload_image' upload.")
     payload_bytes = await payload_image.read()
@@ -835,7 +831,7 @@ def _encode_jpeg(rgb: np.ndarray, container: bytes, qf: int, delta: float = 1.0)
 @router.post(
     "/encode",
     responses={400: {"model": ErrorResponse}},
-    summary="Embed a payload into a cover image or video (DCT-QIM)",
+    summary="Embed a payload into a cover image (spatial LSB → PNG) or video (DCT-QIM)",
 )
 async def stego_encode(
     cover: UploadFile = File(..., description="Cover image or video"),
@@ -864,7 +860,7 @@ async def stego_encode(
     ),
     message: str = Form("", description="Payload text (TEXT_MESSAGE)"),
     payload_file: Optional[UploadFile] = File(None, description="Payload file (TEXT_FILE)"),
-    payload_image: Optional[UploadFile] = File(None, description="Payload image (IMAGE, video covers only)"),
+    payload_image: Optional[UploadFile] = File(None, description="Payload image (IMAGE)"),
 ) -> Response:
     cover_type = _detect_cover_type(cover)
     validated = _validate_combo(cover_type, payload_type)
@@ -909,32 +905,17 @@ async def stego_encode(
                                    preset_id=params.preset_id.value if params.preset_id else None),
         )
 
-    # ---- IMAGE cover: PNG/BMP -> lossless LSB, else block DCT-QIM ---------
-    engine = _detect_image_engine_lenient(data)
+    # ---- IMAGE cover: decode raster, spatial LSB, always PNG --------------
     rgb = _decode_image(data)
-    if engine == "lsb":
-        container = build_container(
-            payload_bytes, container_type,
-            compression_preset=params.container_tier_id, password=password or None,
-            original_filename=fname, mime_type=mime,
-            compress=(payload_comp == "DEFLATE"), use_ecc=True,
-        )
-        png = _encode_lsb(data, container, password, bpc=params.bpc)
-        return Response(content=png, media_type="image/png",
-                        headers=_lsb_metric_headers(rgb, png, len(container)))
-
     container = build_container(
         payload_bytes, container_type,
         compression_preset=params.container_tier_id, password=password or None,
         original_filename=fname, mime_type=mime,
         compress=(payload_comp == "DEFLATE"), use_ecc=True,
     )
-    jpeg, stats = _encode_jpeg(rgb, container, params.qf, delta=params.delta)
-    return Response(
-        content=jpeg,
-        media_type="image/jpeg",
-        headers=_image_metric_headers(stats, rgb, jpeg, container_bytes=len(container)),
-    )
+    png = _encode_lsb(data, container, password, bpc=params.bpc)
+    return Response(content=png, media_type="image/png",
+                    headers=_lsb_metric_headers(rgb, png, len(container)))
 
 
 @router.post(
@@ -1013,12 +994,12 @@ async def stego_decode(
 
 
 # ---------------------------------------------------------------------------
-# Dedicated image endpoints (lossless LSB for PNG/BMP, DCT-QIM for JPEG)
+# Dedicated image endpoints (spatial LSB -> PNG; JPEG decode keeps DCT extract)
 # ---------------------------------------------------------------------------
 
-#: Image formats the LSB engine tolerates (lossless).
-_LSB_FORMATS = {"PNG", "BMP"}
-#: Formats that funnel through the block DCT-QIM engine (lossy).
+#: Formats extracted with spatial LSB (new encodes are always PNG).
+_LSB_FORMATS = {"PNG", "BMP", "WEBP", "GIF"}
+#: Legacy DCT-QIM stego files (encode no longer produces these).
 _DCT_FORMATS = {"JPEG"}
 
 
@@ -1035,24 +1016,22 @@ def _detect_image_engine(data: bytes) -> str:
         return "dct"
     raise StegoError(
         StegoErrorCode.IMAGE_FORMAT_UNSUPPORTED,
-        f"Unsupported image format '{fmt or 'unknown'}'. Use PNG/BMP "
-        "(lossless LSB) or JPEG (DCT-QIM).",
+        f"Unsupported image format '{fmt or 'unknown'}'. Use PNG/BMP/JPEG/WebP/GIF.",
     )
 
 
 def _detect_image_engine_lenient(data: bytes) -> str:
-    """Engine for capacity estimation: 'lsb' for lossless PNG/BMP, else 'dct'.
+    """Engine for capacity/encode fallback: spatial LSB for every raster image.
 
-    Unlike :func:`_detect_image_engine`, this never 400s on formats the
-    capacity model can still estimate (e.g. WebP): only PNG/BMP get the
-    spatial model, everything else falls through to the JPEG DCT model.
+    JPEG is decoded to pixels and treated like PNG. Only an actual JPEG *file*
+    still uses DCT extract (legacy stego) via :func:`_detect_image_engine`.
     """
     try:
         with Image.open(io.BytesIO(data)) as img:
             fmt = (img.format or "").upper()
     except Exception:  # noqa: BLE001 - decode failure already surfaced upstream
-        return "dct"
-    return "lsb" if fmt in _LSB_FORMATS else "dct"
+        return "lsb"
+    return "dct" if fmt in _DCT_FORMATS else "lsb"
 
 
 def _encode_lsb(cover_data: bytes, container: bytes, password: str, bpc: int = 1) -> bytes:
@@ -1092,11 +1071,11 @@ def _extract_lsb(data: bytes, password: str) -> bytes:
 @router.post(
     "/image/encode",
     responses={400: {"model": ErrorResponse}},
-    summary="Embed a payload into an image (PNG/BMP via LSB, JPEG via DCT-QIM)",
+    summary="Embed a payload into an image (spatial LSB, PNG out)",
 )
 async def stego_image_encode(
     cover: UploadFile = File(..., description="Cover image (PNG/BMP/JPEG)"),
-    payload_type: str = Form("TEXT_MESSAGE", description="TEXT_MESSAGE | TEXT_FILE"),
+    payload_type: str = Form("TEXT_MESSAGE", description="TEXT_MESSAGE | TEXT_FILE | IMAGE"),
     # PRIMARY: the single user-facing preset axis (unified presets).
     preset: str = Form(
         "LOSSLESS",
@@ -1119,6 +1098,7 @@ async def stego_image_encode(
     ),
     message: str = Form("", description="Payload text (TEXT_MESSAGE)"),
     payload_file: Optional[UploadFile] = File(None, description="Payload file (TEXT_FILE)"),
+    payload_image: Optional[UploadFile] = File(None, description="Payload image (IMAGE)"),
 ) -> Response:
     cover_type = _detect_cover_type(cover)
     if cover_type != CoverType.IMAGE:
@@ -1140,28 +1120,11 @@ async def stego_image_encode(
     )
     payload_comp = _apply_payload_compression(params, payload_compression, compress)
 
-    engine = _detect_image_engine(data)
     payload_bytes, container_type, fname, mime = await _assemble_payload(
-        validated, message, payload_file, None
+        validated, message, payload_file, payload_image
     )
 
-    if engine == "lsb":
-        cover_rgb = _decode_image(data)
-        container = build_container(
-            payload_bytes,
-            container_type,
-            compression_preset=params.container_tier_id,
-            password=password or None,
-            original_filename=fname,
-            mime_type=mime,
-            compress=(payload_comp == "DEFLATE"), use_ecc=True,
-        )
-        png = _encode_lsb(data, container, password, bpc=params.bpc)
-        return Response(content=png, media_type="image/png",
-                        headers=_lsb_metric_headers(cover_rgb, png, len(container)))
-
-    # JPEG -> block DCT-QIM
-    rgb = _decode_image(data)
+    cover_rgb = _decode_image(data)
     container = build_container(
         payload_bytes,
         container_type,
@@ -1171,12 +1134,9 @@ async def stego_image_encode(
         mime_type=mime,
         compress=(payload_comp == "DEFLATE"), use_ecc=True,
     )
-    jpeg, stats = _encode_jpeg(rgb, container, params.qf, delta=params.delta)
-    return Response(
-        content=jpeg,
-        media_type="image/jpeg",
-        headers=_image_metric_headers(stats, rgb, jpeg, container_bytes=len(container)),
-    )
+    png = _encode_lsb(data, container, password, bpc=params.bpc)
+    return Response(content=png, media_type="image/png",
+                    headers=_lsb_metric_headers(cover_rgb, png, len(container)))
 
 
 @router.post(
@@ -1225,6 +1185,93 @@ async def stego_image_decode(
             f"Could not recover the payload: {exc}",
         )
     return _decode_response(header, payload)
+
+
+@router.post(
+    "/analyze",
+    response_model=AnalyzeResponse,
+    responses={400: {"model": ErrorResponse}},
+    summary="Run classical LSB steganalysis on an image",
+)
+async def stego_analyze(
+    cover: UploadFile = File(..., description="Image to analyse (PNG/JPEG/BMP)"),
+) -> AnalyzeResponse:
+    """Chi-square, SPA, RS, primary sets, sequential WS, and HSTG header scan.
+
+    Verdict is this app's sequential HSTG wrapper, sequential WS, or SPA+RS.
+    Adaptive LSB and leftover JPEG DCT-QIM files may look clean. A positive
+    flag is not proof of a specific hidden file.
+    """
+    cover_type = _detect_cover_type(cover)
+    if cover_type != CoverType.IMAGE:
+        raise StegoError(
+            StegoErrorCode.PAYLOAD_COMBO_INVALID,
+            "/analyze expects an image (PNG/JPEG/BMP).",
+        )
+    data = await cover.read()
+    _validate_upload(data, is_video=False)
+    rgb = _decode_image(data)
+    is_jpeg = data[:3] == b"\xff\xd8\xff"
+
+    from modules.steganalysis import (
+        ChiSquareAttack,
+        PrimarySets,
+        RSAnalysis,
+        SamplePairAnalysis,
+        SequentialWS,
+        scan_sequential_hstg_header,
+    )
+
+    chi = ChiSquareAttack.detect(rgb)
+    spa = SamplePairAnalysis.detect(rgb)
+    rs = RSAnalysis.detect(rgb)
+    primary = PrimarySets.detect(rgb)
+    ws = SequentialWS.detect(rgb, mode="prefix")
+    hstg = scan_sequential_hstg_header(rgb)
+    chi_detected = bool(chi.get("detected"))
+    spa_detected = bool(spa.get("detected"))
+    rs_detected = bool(rs.get("detected"))
+    primary_detected = bool(primary.get("detected"))
+    ws_detected = bool(ws.detected)
+    hstg_found = bool(hstg.get("found"))
+    spa_rate = float(spa.get("estimated_payload", 0.0))
+    rs_rate = float(rs.get("estimated_payload", 0.0))
+    # Lossy JPEG cannot carry this app's spatial LSB (encoder writes PNG).
+    # SPA/RS on decoded JPEG also false-positive; they do not vote.
+    quantitative_agree = (not is_jpeg) and spa_rate >= 0.15 and rs_rate >= 0.15
+    verdict = (
+        "lsb_suspected"
+        if (hstg_found or ws_detected or quantitative_agree)
+        else "likely_clean"
+    )
+    return AnalyzeResponse(
+        verdict=verdict,
+        chi_square=AnalyzeDetectorResult(
+            detected=chi_detected,
+            stego_probability=float(chi.get("stego_probability", 0.0)),
+            chi2_stat=float(chi.get("chi2_stat", 0.0)),
+            prefix_detected=bool(chi.get("prefix_detected")),
+        ),
+        sample_pairs=AnalyzeDetectorResult(
+            detected=spa_detected,
+            estimated_payload=float(spa.get("estimated_payload", 0.0)),
+        ),
+        rs_analysis=AnalyzeDetectorResult(
+            detected=rs_detected,
+            estimated_payload=float(rs.get("estimated_payload", 0.0)),
+        ),
+        primary_sets=AnalyzeDetectorResult(
+            detected=primary_detected,
+            estimated_payload=float(primary.get("estimated_payload", 0.0)),
+        ),
+        sequential_ws=SequentialWsResult(**ws.as_api_dict()),
+        hstg_header=HstgHeaderScan(
+            found=hstg_found,
+            bits_per_channel=hstg.get("bits_per_channel"),
+            payload_bytes=hstg.get("payload_bytes"),
+            version=hstg.get("version"),
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------

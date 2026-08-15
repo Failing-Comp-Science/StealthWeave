@@ -355,16 +355,13 @@ def resolve_preset(
         raise ValueError(f"Unsupported image format '{carrier_format}'.")
     if ptype not in {"TEXT_MESSAGE", "TEXT_FILE", "IMAGE"}:
         raise ValueError(f"Unsupported payload type '{payload_type}'.")
-    if mod == "image" and ptype == "IMAGE":
-        raise ValueError("IMAGE payload is not supported in an image cover.")
 
-    # Engine selection is FORMAT-driven (PNG/BMP -> spatial LSB, JPEG -> DCT-QIM).
+    # Engine selection is FORMAT-driven for video; all still-image formats
+    # use spatial LSB (JPEG is decoded to pixels and saved as PNG).
     if mod == "video":
         engine = "video_iframe_dct_qim"
-    elif fmt in {"png", "bmp"}:
-        engine = "spatial_lsb"
     else:
-        engine = "jpeg_dct_qim"
+        engine = "spatial_lsb"
 
     if compression_requested is None:
         compression_requested = True  # every preset policy is "deflate_if_smaller"

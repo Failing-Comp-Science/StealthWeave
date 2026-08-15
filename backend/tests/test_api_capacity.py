@@ -2,9 +2,8 @@
 Tests for POST /api/stego/capacity (app/api/stego.py).
 
 Exercises the restricted cover/payload matrix at the API boundary:
-  * valid combinations for IMAGE and VIDEO covers,
-  * the two required rejections (IMAGE payload into IMAGE cover; VIDEO payload
-    into VIDEO cover) returning HTTP 400 with a clear message,
+  * valid combinations for IMAGE and VIDEO covers (including IMAGE-into-IMAGE),
+  * VIDEO payload into a cover returning HTTP 400 with a clear message,
   * >=3 compression presets returned per cover type in a single call.
 """
 import io
@@ -78,7 +77,7 @@ def test_healthz():
 # Valid combinations
 # --------------------------------------------------------------------------
 
-@pytest.mark.parametrize("payload_type", ["TEXT_MESSAGE", "TEXT_FILE"])
+@pytest.mark.parametrize("payload_type", ["TEXT_MESSAGE", "TEXT_FILE", "IMAGE"])
 def test_image_cover_valid_payloads(png_bytes, payload_type):
     r = client.post(
         URL, params={"payload_type": payload_type},
@@ -103,6 +102,8 @@ def test_image_cover_valid_payloads(png_bytes, payload_type):
         # The spatial model reports the full LSB budget, not the ~hundreds of
         # bytes the JPEG model would claim for the same cover.
         assert p["max_bytes_text_message"] > 10_000
+        assert p["max_bytes_image"] is not None
+        assert p["max_bytes_image"] > 10_000
 
 
 @pytest.mark.parametrize("preset", ["CHAT_STANDARD", "CHAT_HD", "NO_COMPRESSION"])
@@ -122,8 +123,8 @@ def test_capacity_compression_preset_query_echoed(png_bytes, preset):
 
 
 @pytest.mark.parametrize("payload_type", ["TEXT_MESSAGE", "TEXT_FILE"])
-def test_jpeg_cover_still_returns_dct_presets(jpeg_bytes, payload_type):
-    # JPEG covers keep the block DCT-QIM model: all three carrier presets.
+def test_jpeg_cover_returns_spatial_capacity(jpeg_bytes, payload_type):
+    # JPEG covers are decoded to pixels and use the same spatial LSB model as PNG.
     r = client.post(
         URL, params={"payload_type": payload_type},
         files={"cover": ("cover.jpg", jpeg_bytes, "image/jpeg")},
@@ -131,12 +132,12 @@ def test_jpeg_cover_still_returns_dct_presets(jpeg_bytes, payload_type):
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["cover_type"] == "IMAGE"
-    assert len(body["presets"]) == 3
-    assert {p["id"] for p in body["presets"]} == {"light", "standard", "heavy"}
+    assert {p["id"] for p in body["presets"]} == {"lossless_high_capacity"}
     for p in body["presets"]:
-        assert p["target_quality_factor"] is not None
         assert p["max_bytes_text_message"] is not None
-        assert p["compression_preset"] == "no_compression"
+        assert p["max_bytes_text_message"] > 10_000
+        assert p["max_bytes_image"] is not None
+        assert p["max_bytes_image"] > 10_000
 
 
 def test_capacity_unknown_compression_preset_422(png_bytes):
@@ -171,7 +172,7 @@ def test_allowed_payload_types_reported(png_bytes, mp4_bytes):
         URL, params={"payload_type": "TEXT_MESSAGE"},
         files={"cover": ("c.png", png_bytes, "image/png")},
     )
-    assert r_img.json()["allowed_payload_types"] == ["TEXT_MESSAGE", "TEXT_FILE"]
+    assert r_img.json()["allowed_payload_types"] == ["TEXT_MESSAGE", "TEXT_FILE", "IMAGE"]
 
     r_vid = client.post(
         URL, params={"payload_type": "IMAGE"},
@@ -184,15 +185,16 @@ def test_allowed_payload_types_reported(png_bytes, mp4_bytes):
 # Required rejections (task step 5)
 # --------------------------------------------------------------------------
 
-def test_reject_image_payload_into_image_cover(png_bytes):
+def test_image_payload_into_image_cover_succeeds(png_bytes):
     r = client.post(
         URL, params={"payload_type": "IMAGE"},
         files={"cover": ("cover.png", png_bytes, "image/png")},
     )
-    assert r.status_code == 400
-    detail = r.json()["detail"]
-    assert "IMAGE" in detail and "not allowed" in detail
-    assert "TEXT_MESSAGE" in detail and "TEXT_FILE" in detail
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["payload_type"] == "IMAGE"
+    assert body["cover_type"] == "IMAGE"
+    assert body["presets"][0]["max_bytes_image"] > 10_000
 
 
 def test_reject_video_payload_into_image_cover(png_bytes):

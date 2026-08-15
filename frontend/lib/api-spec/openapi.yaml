@@ -12,6 +12,8 @@ tags:
     description: Health operations
   - name: stego
     description: Steganography capacity + container operations
+  - name: steganalysis
+    description: Classical LSB detectors (sequential Weighted Stego and related)
 paths:
   /healthz:
     get:
@@ -37,7 +39,7 @@ paths:
         DCT block count (image) or usable I-frame DCT coefficient slots (video)
         at each preset's target quality. The cover type is detected server-side
         and the cover/payload matrix is enforced there:
-        IMAGE cover -> {TEXT_MESSAGE, TEXT_FILE};
+        IMAGE cover -> {TEXT_MESSAGE, TEXT_FILE, IMAGE};
         VIDEO cover -> {TEXT_MESSAGE, TEXT_FILE, IMAGE}.
         Invalid combinations return 400.
 
@@ -149,6 +151,10 @@ paths:
                 payload_file:
                   type: string
                   format: binary
+                payload_image:
+                  type: string
+                  format: binary
+                  description: Payload image (IMAGE)
       responses:
         "200":
           description: Stego image bytes (PNG for LSB path, JPEG for DCT-QIM path)
@@ -159,6 +165,92 @@ paths:
               schema: {}
         "400":
           description: Invalid cover/payload combination or payload too large
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /steganalysis/sequential-ws:
+    post:
+      operationId: sequentialWsAnalyze
+      tags: [steganalysis]
+      summary: Sequential Weighted Stego scan for raster-prefix LSB replacement
+      description: >
+        Ker sequential WS on decoded RGB, independently per channel, with a
+        logarithmic prefix (or window) grid and Benjamini–Hochberg correction.
+        A suspicious decision is statistically suspicious for sequential LSB
+        replacement; it does not prove hidden data exists.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [cover]
+              properties:
+                cover:
+                  type: string
+                  format: binary
+                  description: Image to analyse (PNG/JPEG/BMP)
+                candidate_min:
+                  type: integer
+                  description: Smallest prefix/window length in samples (default 256)
+                candidate_max:
+                  type: integer
+                  description: Largest prefix/window length (default full channel)
+                n_candidates:
+                  type: integer
+                  description: Optional fixed log-grid size; default doubles from min
+                mode:
+                  type: string
+                  enum: [prefix, window]
+                  default: prefix
+      responses:
+        "200":
+          description: Sequential WS detector result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SequentialWsResult"
+        "400":
+          description: Not an image or decode failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /stego/analyze:
+    post:
+      operationId: stegoAnalyze
+      tags: [stego]
+      summary: Run classical LSB steganalysis on an image
+      description: >
+        Uploads an image and returns chi-square, sample pair analysis,
+        RS-analysis, primary sets, sequential Weighted Stego, and a sequential
+        HSTG v1 header scan, plus an overall verdict (likely_clean |
+        lsb_suspected). Verdict is this app's HSTG LSB wrapper, sequential WS,
+        or SPA and RS together. Chi-square and primary sets are reported but do
+        not vote. Short typed messages often miss WS but still carry the HSTG
+        header. Leftover JPEG DCT-QIM files may look clean.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [cover]
+              properties:
+                cover:
+                  type: string
+                  format: binary
+                  description: Image to analyse (PNG/JPEG/BMP)
+      responses:
+        "200":
+          description: Detector scores
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnalyzeResponse"
+        "400":
+          description: Not an image or decode failed
           content:
             application/json:
               schema:
@@ -427,4 +519,127 @@ components:
       properties:
         detail:
           type: string
+    AnalyzeDetectorResult:
+      type: object
+      required: [detected]
+      properties:
+        detected:
+          type: boolean
+        stego_probability:
+          type: number
+          nullable: true
+        chi2_stat:
+          type: number
+          nullable: true
+        prefix_detected:
+          type: boolean
+          nullable: true
+        estimated_payload:
+          type: number
+          nullable: true
+    SequentialWsCandidate:
+      type: object
+      required: [end, raw_score]
+      properties:
+        end:
+          type: integer
+        raw_score:
+          type: number
+        adjusted_p_value:
+          type: number
+          nullable: true
+    SequentialWsChannelScores:
+      type: object
+      required: [red, green, blue]
+      properties:
+        red:
+          type: number
+        green:
+          type: number
+        blue:
+          type: number
+    SequentialWsResult:
+      type: object
+      required:
+        - detector
+        - decision
+        - score
+        - estimated_change_rate
+        - channel_scores
+        - candidate_curve
+        - runtime_ms
+        - limitations
+        - implementation_version
+        - detected
+      properties:
+        detector:
+          type: string
+        decision:
+          type: string
+          enum: [clean, suspicious, inconclusive]
+        score:
+          type: number
+          description: Maximum standardized WS statistic (z), not a probability
+        p_value:
+          type: number
+          nullable: true
+        estimated_change_rate:
+          type: number
+        estimated_payload_bits:
+          type: integer
+          nullable: true
+        estimated_prefix_samples:
+          type: integer
+          nullable: true
+        channel_scores:
+          $ref: "#/components/schemas/SequentialWsChannelScores"
+        candidate_curve:
+          type: array
+          items:
+            $ref: "#/components/schemas/SequentialWsCandidate"
+        runtime_ms:
+          type: number
+        limitations:
+          type: array
+          items:
+            type: string
+        implementation_version:
+          type: string
+        detected:
+          type: boolean
+    HstgHeaderScan:
+      type: object
+      required: [found]
+      properties:
+        found:
+          type: boolean
+        bits_per_channel:
+          type: integer
+          nullable: true
+        payload_bytes:
+          type: integer
+          nullable: true
+          description: v1 LENGTH field (encrypted wrapper size), not original payload size
+        version:
+          type: integer
+          nullable: true
+    AnalyzeResponse:
+      type: object
+      required: [verdict, chi_square, sample_pairs, rs_analysis, primary_sets, sequential_ws, hstg_header]
+      properties:
+        verdict:
+          type: string
+          enum: [likely_clean, lsb_suspected]
+        chi_square:
+          $ref: "#/components/schemas/AnalyzeDetectorResult"
+        sample_pairs:
+          $ref: "#/components/schemas/AnalyzeDetectorResult"
+        rs_analysis:
+          $ref: "#/components/schemas/AnalyzeDetectorResult"
+        primary_sets:
+          $ref: "#/components/schemas/AnalyzeDetectorResult"
+        sequential_ws:
+          $ref: "#/components/schemas/SequentialWsResult"
+        hstg_header:
+          $ref: "#/components/schemas/HstgHeaderScan"
 

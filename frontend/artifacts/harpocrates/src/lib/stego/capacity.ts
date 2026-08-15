@@ -78,6 +78,7 @@ export interface SpatialCapacityRow {
   survivability_description: string;
   max_bytes_text_message: number;
   max_bytes_text_file: number;
+  max_bytes_image: number;
   /** Mirror of the backend spatial_capacity diagnostics. */
   total_blocks: number;
   eligible_blocks: number;
@@ -98,6 +99,7 @@ export function computeSpatialCapacity(height: number, width: number): SpatialCa
       "Survives: lossless round-trips (PNG/BMP re-save), no lossy re-encode",
     max_bytes_text_message: maxPayloadFromContainerBytes(budget, message, 1.0),
     max_bytes_text_file: maxPayloadFromContainerBytes(budget, file, 1.0),
+    max_bytes_image: maxPayloadFromContainerBytes(budget, file, 1.0),
     total_blocks: Math.floor(height / 8) * Math.floor(width / 8),
     eligible_blocks: height * width * 3,
     usable_coeff_slots: height * width * 3,

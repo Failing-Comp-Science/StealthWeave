@@ -22,6 +22,7 @@ Harpocrates/
 ├── CARRIER_PRESETS.md     legacy carrier-preset axis (kept for history)
 ├── COMPRESSION_PRESETS.md compression-preset axis (kept for history)
 ├── UNIFIED_PRESETS.md     current unified user-facing preset contract
+├── STEGANALYSIS.md        sequential WS + classical LSB detectors (math, limits)
 ├── REFERENCE_REVIEW.md    studied third-party references + license map
 ├── WORK_AND_FAILURES.md   work report + failure log (single ledger)
 ├── AGENT_RULES.md         living rules for the AI coding agent
@@ -43,6 +44,19 @@ URL is configured in `.git/config`; see `AGENT_RULES.md` §9 for the pending act
 
 - **Backend:** `cd backend && python -m pytest` (Python 3.9, deps in `requirements.txt`).
 - **Frontend:** `cd frontend && pnpm install && pnpm dev` (Node 24, pnpm workspace).
+
+Analyze (`/analyze`) runs classical LSB detectors on decoded RGB: chi-square,
+sample pair analysis, RS-analysis, primary sets, **sequential Weighted Stego**
+(Ker), and a scan for this app’s unencrypted **HSTG v1 header** in the
+sequential LSBs. Combined verdict is that header, WS, or two quantitative
+detectors. Short typed messages often miss WS but still carry the header.
+Mathematics, assumptions, and limits: [STEGANALYSIS.md](STEGANALYSIS.md).
+Offline paired evaluation (not default pytest):
+
+```
+python evaluation/generate_lsb_pairs.py
+python evaluation/benchmark_sequential_ws.py
+```
 
 ## Git hygiene
 
@@ -66,11 +80,17 @@ credit to their authors; license details govern any further use:
 | [AlphaSteg](https://github.com/bennjordan/AlphaSteg) | bennjordan | None ⚠️ | Audio stego FastAPI app (study only) |
 | [videoseal](https://github.com/facebookresearch/videoseal) | Meta / Facebook Research | MIT | Neural image/video watermarking (code-reusable patterns) |
 | [javid-steganography](https://github.com/Iman/javid-steganography) | Iman | MIT | Image LSB + Hamming(7,4) ECC (code-reusable patterns) |
+| [Aletheia](https://github.com/daniellerch/aletheia) | Daniel Lerch | MIT | Structural LSB detectors (SPA/RS/WS/Triples) — study / validation only; do not copy |
+| [sealwatch](https://github.com/uibk-uncover/sealwatch) | UNCOVER / UIBK | MPL-2.0 | WS/SPA/χ²/SPAM/SRM reference — study only; optional future rich-model dependency after license audit |
+| [StegExpose](https://github.com/b3dk7/StegExpose) | b3dk7 | Verify before use | Educational LSB-heuristic comparison; not the primary detector |
 
 **License hygiene policy:** openStego (GPLv2) and the unlicensed repos may be read for
 algorithmic inspiration and cited, but their code must never be copied into this
-codebase. Only MIT-licensed references (videoseal, javid-steganography) are safe to
-borrow from.
+codebase. Aletheia (MIT) and sealwatch (MPL-2.0) are **reference implementations
+only** in v1: sequential WS is reimplemented from Ker’s papers. Do not bundle
+Aletheia’s external model repository or pretrained weights without auditing each
+artifact. Only MIT-licensed references that we actually copy from (videoseal,
+javid-steganography) are treated as code-reusable.
 
 ## License
 

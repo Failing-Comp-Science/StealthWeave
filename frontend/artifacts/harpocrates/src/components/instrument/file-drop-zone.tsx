@@ -43,9 +43,18 @@ async function buildDropFile(file: File, kind: DropFileKind, format?: string): P
     // Phase 1: sniff dimensions from the header bytes (instant) instead of a
     // full ``new Image()`` pixel decode. Returns null dims for exotic formats
     // — the preview still works, only the dimension readout is omitted.
-    const head = new Uint8Array(await file.slice(0, 512).arrayBuffer().catch(() => new ArrayBuffer(0)));
+    const head = new Uint8Array(await file.slice(0, 65536).arrayBuffer().catch(() => new ArrayBuffer(0)));
     const dims = sniffImageDimensions(format ?? "", head);
-    return dims ? { ...base, ...dims } : base;
+    if (dims) return { ...base, ...dims };
+    try {
+      const bitmap = await createImageBitmap(file);
+      const width = bitmap.width;
+      const height = bitmap.height;
+      bitmap.close();
+      return width > 0 && height > 0 ? { ...base, width, height } : base;
+    } catch {
+      return base;
+    }
   }
   if (kind === "video") {
     return new Promise((resolve) => {

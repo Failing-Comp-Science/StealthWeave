@@ -25,6 +25,7 @@ from fastapi import FastAPI  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 
 from app.api.stego import router as stego_router  # noqa: E402
+from app.api.steganalysis import router as steganalysis_router  # noqa: E402
 from app.core.errors import StegoError, stego_error_handler  # noqa: E402
 from app.core.health import media_health  # noqa: E402
 
@@ -101,6 +102,7 @@ async def healthz_media() -> dict:
 
 # All stego routes live under /api (matches the frontend api-client base URL).
 app.include_router(stego_router, prefix="/api")
+app.include_router(steganalysis_router, prefix="/api")
 
 # Structured error rendering: StegoError -> {"detail", "code"} (Phase 2C).
 app.add_exception_handler(StegoError, stego_error_handler)

@@ -84,29 +84,24 @@ def test_capacity_unified_preset_echoed(jpeg_bytes, preset):
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["preset"] == preset
-    # JPEG covers report all three engine tiers, each mapped onto a unified id.
+    # JPEG covers use the spatial LSB row (same as PNG).
     by_tier = {p["id"]: p for p in body["presets"]}
-    assert set(by_tier) == {"light", "standard", "heavy"}
-    assert by_tier["light"]["preset_id"] == "LOSSLESS"
-    assert by_tier["standard"]["preset_id"] == "CHAT_HD"
-    assert by_tier["heavy"]["preset_id"] == "CHAT_STANDARD"
+    assert set(by_tier) == {"lossless_high_capacity"}
+    assert by_tier["lossless_high_capacity"]["preset_id"] == "LOSSLESS"
     assert all(p["preset_label"] for p in body["presets"])
 
 
 def test_capacity_lossless_is_maximum(jpeg_bytes):
-    # Phase 2.4: collapsing to the single LOSSLESS preset must not reduce what
-    # the UI shows — LOSSLESS (QF 95, derate 1.0) advertises >= every legacy
-    # chat tier for a JPEG cover.
     r = client.post(
         CAP_URL,
         params={"payload_type": "TEXT_MESSAGE", "preset": "LOSSLESS"},
         files={"cover": ("cover.jpg", jpeg_bytes, "image/jpeg")},
     )
     assert r.status_code == 200, r.text
-    by_tier = {p["id"]: p for p in r.json()["presets"]}
-    lossless = by_tier["light"]["max_bytes_text_message"]
-    assert lossless >= by_tier["standard"]["max_bytes_text_message"]
-    assert lossless >= by_tier["heavy"]["max_bytes_text_message"]
+    rows = r.json()["presets"]
+    assert len(rows) == 1
+    assert rows[0]["id"] == "lossless_high_capacity"
+    assert rows[0]["max_bytes_text_message"] > 10_000
 
 
 def test_capacity_pre_rename_alias_still_accepted(jpeg_bytes):

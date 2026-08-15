@@ -73,8 +73,9 @@ function gifDimensions(head: Uint8Array): Dimensions | null {
 function jpegDimensions(head: Uint8Array): Dimensions | null {
   if (head.length < 4 || head[0] !== 0xff || head[1] !== 0xd8) return null;
   let o = 2;
-  while (o + 4 <= head.length) {
-    if (head[o] !== 0xff) return null; // out of sync
+    while (o + 4 <= head.length) {
+      while (o < head.length && head[o] === 0xff && o + 1 < head.length && head[o + 1] === 0xff) o++;
+      if (head[o] !== 0xff) return null; // out of sync
     const marker = head[o + 1];
     if (marker === 0xd9 || marker === 0xda) return null; // EOI / SOS before SOF
     const segLen = u16be(head, o + 2);

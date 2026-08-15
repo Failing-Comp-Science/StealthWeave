@@ -42,6 +42,7 @@ from .accounting import (
 )
 from .dct_embedder import MIN_AC
 from .presets import (
+    IMAGE_COMPRESSION_RATIO,
     IMAGE_PRESETS,
     scaled_luma_table,
 )
@@ -106,6 +107,11 @@ def _max_text_bytes(
         ),
         "max_bytes_text_file": max_payload_channel_bits(
             n_eligible, overhead_file, ratio=text_factor
+        ),
+        # IMAGE pays the same filename/mime overhead as TEXT_FILE; LOSSLESS
+        # (and JPEG DCT) model it at IMAGE_COMPRESSION_RATIO (1.0).
+        "max_bytes_image": max_payload_channel_bits(
+            n_eligible, overhead_file, ratio=IMAGE_COMPRESSION_RATIO
         ),
     }
 
@@ -264,6 +270,9 @@ def spatial_capacity(
             ),
             "max_bytes_text_file": max_payload_from_container_bytes(
                 container_budget, overhead_file, ratio=text_factor
+            ),
+            "max_bytes_image": max_payload_from_container_bytes(
+                container_budget, overhead_file, ratio=IMAGE_COMPRESSION_RATIO
             ),
             "total_blocks": (h // 8) * (w // 8),
             "high_texture_blocks": None,

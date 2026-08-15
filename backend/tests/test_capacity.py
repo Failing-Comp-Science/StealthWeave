@@ -81,12 +81,13 @@ def test_image_capacity_result_shape():
         for key in (
             "id", "name", "description", "technique", "expected_ber",
             "survivability_description", "target_quality_factor",
-            "max_bytes_text_message", "max_bytes_text_file",
+            "max_bytes_text_message", "max_bytes_text_file", "max_bytes_image",
             "compression_preset", "text_compression_factor",
         ):
             assert key in c, f"missing {key}"
         assert c["max_bytes_text_message"] >= 0
         assert c["max_bytes_text_file"] >= 0
+        assert c["max_bytes_image"] >= 0
         # Compression can at most multiply the message capacity by the ratio;
         # the TEXT_FILE metadata overhead makes tiny covers message-heavy.
         assert (
