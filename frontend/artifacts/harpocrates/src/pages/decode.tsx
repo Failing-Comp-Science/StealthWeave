@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import {
-  ArrowRight, Check, Copy, Download, FileText, Image as ImageIcon,
+  ArrowRight, Check, Copy, Download, ExternalLink, FileText, Image as ImageIcon,
   Plus, ScanLine, TriangleAlert,
 } from "lucide-react";
 import { FileDropZone, type DropFile } from "@/components/instrument/file-drop-zone";
@@ -19,6 +19,16 @@ const ERROR_TITLE: Record<string, string> = {
   corrupted: "Corrupted or incompatible file",
   unsupported_preset: "Unsupported preset",
 };
+
+function isHtmlPayload(result: ExtractResult): boolean {
+  const mime = (result.mimeType || result.fileBlob?.type || "").toLowerCase();
+  const name = result.fileName.toLowerCase();
+  return mime.includes("html") || name.endsWith(".html") || name.endsWith(".htm");
+}
+
+function htmlBlob(blob: Blob): Blob {
+  return blob.type.toLowerCase().includes("html") ? blob : new Blob([blob], { type: "text/html" });
+}
 
 export default function DecodePage() {
   const [stego, setStego] = useState<DropFile | null>(null);
@@ -75,7 +85,10 @@ export default function DecodePage() {
         controller.signal,
       );
       if (decodeId.current !== reqId) return; // superseded by a newer request
-      if (res.fileBlob) payloadUrlRef.current = URL.createObjectURL(res.fileBlob);
+      if (res.fileBlob) {
+        const blob = isHtmlPayload(res) ? htmlBlob(res.fileBlob) : res.fileBlob;
+        payloadUrlRef.current = URL.createObjectURL(blob);
+      }
       setResult(res);
       setPhase("done");
       toast({ title: "Extract complete", description: `${res.fileName} recovered.` });
@@ -110,6 +123,11 @@ export default function DecodePage() {
     anchor.click();
   };
 
+  const openWarningPage = () => {
+    if (!payloadUrlRef.current) return;
+    window.open(payloadUrlRef.current, "_blank", "noopener,noreferrer");
+  };
+
   const stageIndex = phase === "uploading" ? 0 : phase === "reading" ? 1 : phase === "decrypting" ? 2 : phase === "extracting" ? 3 : phase === "done" ? 4 : -1;
 
   return (
@@ -117,7 +135,7 @@ export default function DecodePage() {
       <ToolHeader
         mode="decode"
         title={<>Reveal the <i>unseen.</i></>}
-        subline="Extract the hidden payload from an image or video you have been trusted with."
+        subline="Extract the hidden payload from an image you have been trusted with. A stego file still looks ordinary — HTML warnings appear only after this step."
       />
       <div className="tool-layout">
         <div className="tool-form">
@@ -190,6 +208,7 @@ export default function DecodePage() {
               copied={copied}
               onCopy={copyMessage}
               onDownload={downloadPayload}
+              onOpenHtml={openWarningPage}
             />
           ) : (
             <EmptyResult mode="decode" ready={!!stego} idleLabel="SELECT AN ENCODED FILE TO BEGIN" readyLabel="READY WHEN YOU ARE" />
@@ -201,14 +220,16 @@ export default function DecodePage() {
 }
 
 function DecodeResult({
-  result, payloadUrl, copied, onCopy, onDownload,
+  result, payloadUrl, copied, onCopy, onDownload, onOpenHtml,
 }: {
   result: ExtractResult;
   payloadUrl: string | null;
   copied: boolean;
   onCopy: () => void;
   onDownload: () => void;
+  onOpenHtml: () => void;
 }) {
+  const html = result.type === "text-file" && isHtmlPayload(result);
   return (
     <div className="success-result">
       <div className="success-mark"><Check size={18} /></div>
@@ -250,11 +271,23 @@ function DecodeResult({
         <>
           <div className="result-stats">
             <span><small>FILE</small>{result.fileName}</span>
-            <span><small>TYPE</small>TEXT FILE</span>
+            <span><small>TYPE</small>{html ? "HTML / WARNING" : "TEXT FILE"}</span>
             <span><small>SIZE</small>{formatBytes(result.fileSize)}</span>
             <span><small>STATUS</small><b>READY TO TAKE</b></span>
           </div>
-          <button className="button button-primary full-button" onClick={onDownload} data-testid="button-download-payload"><FileText size={15} /> Download recovered file</button>
+          {html && (
+            <p className="form-note" style={{ marginTop: -8, marginBottom: 16 }}>
+              The carrier still looked like a normal image. This page was hidden inside it — clicking the PNG itself cannot open a URL.
+            </p>
+          )}
+          {html && payloadUrl && (
+            <button className="button button-primary full-button" onClick={onOpenHtml} data-testid="button-open-warning">
+              <ExternalLink size={15} /> Open warning page
+            </button>
+          )}
+          <button className={html ? "button button-ghost full-button" : "button button-primary full-button"} onClick={onDownload} data-testid="button-download-payload" style={html ? { marginTop: 10 } : undefined}>
+            <FileText size={15} /> Download recovered file
+          </button>
         </>
       )}
 
@@ -268,7 +301,7 @@ function DecodeResult({
           { label: "ENCRYPTION", value: result.encrypted ? "AES-256-GCM" : "NONE" },
           { label: "KDF", value: result.encrypted ? "PBKDF2 / SHA-256 / 100k" : "N/A" },
         ]}
-        note="MODE distinguishes the lossless client-side spatial engine (image_lsb) from the transform-domain server engine (image_dct_qim / video_dct_qim). PNG/BMP carriers are decoded entirely in the browser; JPEG/video carriers require the server. Compression mode is read from the container's FLAG_COMPRESSED header bit after extraction. The header stores only this boolean today, so the exact Chat preset (standard vs HD) can't be recovered on decode — future space for a container-preset field."
+        note="MODE distinguishes the lossless client-side spatial engine (image_lsb) from the transform-domain server engine (video_dct_qim, and leftover JPEG DCT-QIM files). PNG/BMP (and new JPEG→PNG encodes) extract in the browser; a JPEG file still goes to the server in case it is a legacy DCT carrier. Compression mode is read from the container's FLAG_COMPRESSED header bit after extraction."
       />
     </div>
   );

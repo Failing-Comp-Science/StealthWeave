@@ -10,6 +10,7 @@ import {
 import NotFound from "@/pages/not-found";
 import EncodePage from "@/pages/encode";
 import DecodePage from "@/pages/decode";
+import AnalyzePage from "@/pages/analyze";
 
 const queryClient = new QueryClient();
 
@@ -23,7 +24,7 @@ const features = [
 function AppShell({ children }: { children: ReactNode }) {
   const [location] = useLocation();
   const [menuOpen, setMenuOpen] = useState(false);
-  const currentMode = location.includes("decode") ? "decode" : location.includes("encode") ? "encode" : "home";
+  const currentMode = location.includes("analyze") ? "analyze" : location.includes("decode") ? "decode" : location.includes("encode") ? "encode" : "home";
   return (
     <div className="harp-app">
       <header className="topbar">
@@ -35,6 +36,7 @@ function AppShell({ children }: { children: ReactNode }) {
           <Link href="/" className={currentMode === "home" ? "nav-link active" : "nav-link"} data-testid="link-home">Manifesto</Link>
           <Link href="/encode" className={currentMode === "encode" ? "nav-link active" : "nav-link"} data-testid="link-encode">Encode <span>01</span></Link>
           <Link href="/decode" className={currentMode === "decode" ? "nav-link active" : "nav-link"} data-testid="link-decode">Decode <span>02</span></Link>
+          <Link href="/analyze" className={currentMode === "analyze" ? "nav-link active" : "nav-link"} data-testid="link-analyze">Analyze <span>03</span></Link>
         </nav>
         <div className="topbar-right">
           <span className="system-status"><i /> LOCAL / PRIVATE</span>
@@ -118,6 +120,7 @@ function Router() {
       <Route path="/" component={Home} />
       <Route path="/encode" component={EncodePage} />
       <Route path="/decode" component={DecodePage} />
+      <Route path="/analyze" component={AnalyzePage} />
       <Route component={NotFound} />
     </Switch>
   );

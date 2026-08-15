@@ -26,8 +26,8 @@ const PAYLOAD_ICON: Record<PayloadType, typeof MessageSquareLock> = {
 
 const PAYLOAD_HINT: Record<PayloadType, string> = {
   text: "A short secret typed straight into the instrument.",
-  "text-file": "A .txt / .md / .html / .json / .csv document.",
-  image: "A cover-of-a-cover — hide one image inside the video.",
+  "text-file": "A .txt / .md / .html / .json / .csv document — including the educational warning page.",
+  image: "A cover-of-a-cover. Prefer a JPEG or small PNG payload — a same-size PNG often will not fit.",
 };
 
 export default function EncodePage() {
@@ -61,7 +61,7 @@ export default function EncodePage() {
     };
   }, []);
 
-  // --- Cover selection → capacity (PNG/BMP client-side, JPEG/video cached API) ---
+  // --- Cover selection → capacity (raster images client-side, video cached API) ---
   const selectCover = (file: DropFile) => {
     // A new cover invalidates any in-flight encode + capacity probe and all
     // prior results.
@@ -145,6 +145,23 @@ export default function EncodePage() {
     setResult(null); setPhase("idle"); setError(""); setErrorCode(null);
   };
   const clearPayloadFile = () => { if (payloadFile) URL.revokeObjectURL(payloadFile.url); setPayloadFile(null); };
+
+  const loadEducationalWarning = async () => {
+    try {
+      const base = (import.meta.env.BASE_URL || "/").replace(/\/$/, "");
+      const res = await fetch(`${base}/payload.html`);
+      if (!res.ok) throw new Error(`Could not load payload.html (${res.status})`);
+      const blob = await res.blob();
+      const file = new File([blob], "payload.html", { type: "text/html" });
+      const url = URL.createObjectURL(file);
+      if (payloadType !== "text-file") setPayloadType("text-file");
+      selectPayloadFile({ file, url, kind: "text", format: "text" });
+      toast({ title: "Educational warning loaded", description: "Decode this stego image to extract and open the warning page. Clicking the PNG itself will not launch a URL." });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Could not load the educational warning.";
+      toast({ variant: "destructive", title: "Warning page unavailable", description: message });
+    }
+  };
 
   // --- Derived state -------------------------------------------------------
   const payloadTypes = cover ? payloadTypesFor(cover.kind) : [];
@@ -245,7 +262,7 @@ export default function EncodePage() {
             onClear={clearCover}
             onReject={rejectFile}
             headline="Choose a cover file"
-            subline="An ordinary image or video that will carry your hidden payload."
+        subline="An ordinary image or video. JPEG/WebP/GIF covers are decoded to pixels, embedded with lossless LSB, and downloaded as PNG."
             cta="Drop an image or video here"
             kinds={["image", "video"]}
             testIdPrefix="cover"
@@ -257,7 +274,7 @@ export default function EncodePage() {
           {/* 02 — Payload type (options derived client-side from cover kind) */}
           {cover && (
             <div className="step-block">
-              <div className="step-heading"><span className="step-number">02</span><div><h2>Choose the payload</h2><p>{cover.kind === "video" ? "Video covers can hide text, files, or an image." : "Image covers can hide a text message or a text file."}</p></div></div>
+              <div className="step-heading"><span className="step-number">02</span><div><h2>Choose the payload</h2><p>{cover.kind === "video" ? "Video covers can hide text, files, or an image." : "Image covers can hide a text message, a text file (including HTML), or another image."}</p></div></div>
               {!payloadType ? (
                 <p className="capacity-empty" data-testid="payload-analyzing">Reading carrier metadata…</p>
               ) : (
@@ -292,7 +309,7 @@ export default function EncodePage() {
                         onClear={clearPayloadFile}
                         onReject={rejectFile}
                         headline={payloadType === "image" ? "Choose the image payload" : "Choose the text file"}
-                        subline={payloadType === "image" ? "The image you want to hide inside the cover." : "The document you want to conceal."}
+                        subline={payloadType === "image" ? "Hide one image inside the cover. Prefer a JPEG or small PNG payload — a same-size PNG often will not fit. JPEG covers become PNG after encode." : "The document you want to conceal — including an HTML warning page."}
                         cta={payloadType === "image" ? "Drop an image here" : "Drop a text file here"}
                         kinds={payloadType === "image" ? ["image"] : ["text"]}
                         testIdPrefix="payload"
@@ -300,6 +317,16 @@ export default function EncodePage() {
                         inputTestId="input-payload-encode"
                         previewTestId="preview-payload-encode"
                       />
+                      {payloadType === "text-file" && (
+                        <div style={{ marginTop: 12 }}>
+                          <button type="button" className="button button-ghost" onClick={loadEducationalWarning} data-testid="button-educational-warning">
+                            Use educational warning
+                          </button>
+                          <p className="form-note">
+                            Hides payload.html inside the cover as a text file. The stego image still looks ordinary — Decode extracts the HTML and can open it. Clicking the PNG itself will not launch a URL.
+                          </p>
+                        </div>
+                      )}
                     </div>
                   )}
                 </>
@@ -399,6 +426,11 @@ export default function EncodePage() {
               payloadSize={payloadSize}
               maxBytes={maxBytes}
               preset={DEFAULT_UNIFIED_PRESET}
+              warningHtml={
+                payloadType === "text-file" &&
+                (!!payloadFile?.file.name.toLowerCase().match(/\.html?$/) ||
+                  (payloadFile?.file.type ?? "").includes("html"))
+              }
               onDownload={downloadStego}
             />
           ) : (
@@ -411,7 +443,7 @@ export default function EncodePage() {
 }
 
 function EncodeResult({
-  cover, result, payloadType, payloadSize, maxBytes, preset, onDownload,
+  cover, result, payloadType, payloadSize, maxBytes, preset, warningHtml, onDownload,
 }: {
   cover: DropFile;
   result: EmbedResult;
@@ -419,6 +451,7 @@ function EncodeResult({
   payloadSize: number;
   maxBytes: number;
   preset: UnifiedPresetId;
+  warningHtml?: boolean;
   onDownload: () => void;
 }) {
   const presetDef = UNIFIED_PRESETS.find((p) => p.id === result.preset) ?? UNIFIED_PRESETS.find((p) => p.id === preset);
@@ -430,6 +463,11 @@ function EncodeResult({
       <div className="success-mark"><Check size={18} /></div>
       <div className="eyebrow">PAYLOAD CONCEALED / 01</div>
       <h2>It is there.<br /><i>Just not visible.</i></h2>
+      {warningHtml && (
+        <p className="form-note" style={{ marginTop: -12, marginBottom: 20 }}>
+          This file still looks like a normal image. The warning page appears only after Decode — clicking the PNG will not open a URL.
+        </p>
+      )}
       {cover.kind !== "text" && (
         <div className="result-image-wrap">
           {cover.kind === "video"
@@ -460,7 +498,7 @@ function EncodeResult({
           { label: "ENCRYPTION", value: result.encrypted ? "AES-256-GCM" : "NONE" },
           { label: "FRAMING", value: "HSTG / V2 / SHA-256 + RS ECC" },
         ]}
-        note="MODE distinguishes the lossless client-side spatial engine (image_lsb, PNG/BMP, runs in-browser) from the transform-domain server engine (image_dct_qim / video_dct_qim, JPEG/video). REMAINING is the unused payload capacity on the strongest preset after this embed. The preset resolves the full engine configuration server-side (QF/CRF, QIM delta, LSB depth, container tier); DEFLATE is applied inside the container only when it actually shrinks the payload, and the decode panel reads the outcome from the container's flag bit. Container size comes from the X-Stego-Container-Bytes header; PSNR / SSIM / BER are measured per-encode by the server (X-Stego-* headers)."
+        note="MODE is the lossless client-side spatial engine (image_lsb): PNG/BMP/JPEG/WebP/GIF covers are rasterized, LSB-embedded, and saved as PNG in the browser. Video still uses the transform-domain server engine (video_dct_qim). REMAINING is unused payload capacity after this embed. DEFLATE is applied inside the container only when it actually shrinks the payload; Decode reads that from the container flag."
       />
     </div>
   );

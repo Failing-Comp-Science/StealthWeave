@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex">
+<title>SECURITY ALERT</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html,body { height:100%; }
+  body {
+    font-family:-apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background:#12000a;
+    color:#fff;
+    overflow:hidden;
+    display:flex; align-items:center; justify-content:center;
+    text-align:center;
+    -webkit-tap-highlight-color:transparent;
+  }
+  .wrap { padding:24px; max-width:720px; }
+  .badge {
+    display:inline-block; padding:8px 18px; border-radius:999px;
+    background:#3d0404; color:#ff9d9d; border:1px solid #ff5555;
+    font-size:13px; letter-spacing:.22em; font-weight:700; margin-bottom:26px;
+  }
+  h1 {
+    font-size:clamp(28px,7vw,64px); line-height:1.08; letter-spacing:.02em;
+    background:linear-gradient(180deg,#ff6a6a,#ff2d2d);
+    -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent;
+    margin-bottom:22px; font-weight:900;
+  }
+  .sub { font-size:clamp(15px,3vw,20px); color:#ffd2d2; line-height:1.55; margin-bottom:30px; }
+  .blink {
+    font-size:clamp(13px,2.5vw,16px); color:#ffb3b3; letter-spacing:.14em;
+    animation:blink 1s steps(2,start) infinite; font-weight:600;
+  }
+  @keyframes blink { 50% { opacity:0; } }
+  .icon { font-size:clamp(52px,10vw,84px); display:block; margin-bottom:20px; animation:pulse 1.4s ease-in-out infinite; }
+  @keyframes pulse { 0%,100%{transform:scale(1)} 50%{transform:scale(1.14)} }
+  .lock { margin-top:34px; font-size:12px; color:#7a4a4a; letter-spacing:.06em; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <span class="icon" aria-hidden="true">&#9888;&#65039;</span>
+  <div class="badge">HIDDEN PAYLOAD DETECTED</div>
+  <h1>THIS IS HOW HACKERS GET YOU.<br>STAY SAFE.</h1>
+  <p class="sub">This message was hidden inside media you opened.<br>
+  Malware rides in images, audio and video without you knowing.<br>
+  Not every file that looks harmless is harmless &mdash; check what you download.</p>
+  <div class="blink">EDUCATIONAL DEMO &bull; NO HARM DONE &bull; YOU ARE SAFE</div>
+  <div class="lock">&#128272; this is a safe, non-malicious demonstration payload</div>
+</div>
+<script>
+  try { alert("THIS IS HOW HACKERS GET YOU. STAY SAFE."); } catch (e) {}
+</script>
+</body>
+</html>

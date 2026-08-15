@@ -126,6 +126,7 @@ def test_spatial_capacity_reports_lossless_preset():
     assert c["target_quality_factor"] == 100
     assert c["max_bytes_text_message"] >= 0
     assert c["max_bytes_text_file"] >= 0
+    assert c["max_bytes_image"] == c["max_bytes_text_file"]
 
 
 def test_spatial_capacity_is_much_larger_than_jpeg_model():

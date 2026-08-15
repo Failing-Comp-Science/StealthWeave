@@ -1,9 +1,26 @@
 """
 Steganalysis Module
 
-Provides statistical attacks (chi-square, RS-analysis) and a CNN classifier
-(GBRAS-Net style) to self-test the detectability of our steganography.
+Classical statistical attacks (progressive chi-square, sample pair analysis,
+RS-analysis) plus sequential Weighted Stego for this app's raster-prefix LSB.
 """
-from .attacks import ChiSquareAttack, RSAnalysis, self_test_image
+from .attacks import (
+    ChiSquareAttack,
+    PrimarySets,
+    RSAnalysis,
+    SamplePairAnalysis,
+    self_test_image,
+)
+from .hstg_header import scan_sequential_hstg_header
+from .sequential_ws import SequentialWS, SequentialWSResult
 
-__all__ = ['ChiSquareAttack', 'RSAnalysis', 'self_test_image']
+__all__ = [
+    "ChiSquareAttack",
+    "SamplePairAnalysis",
+    "RSAnalysis",
+    "PrimarySets",
+    "SequentialWS",
+    "SequentialWSResult",
+    "scan_sequential_hstg_header",
+    "self_test_image",
+]

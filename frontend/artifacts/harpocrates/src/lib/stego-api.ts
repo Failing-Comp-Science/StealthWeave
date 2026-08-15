@@ -2,8 +2,8 @@
  * Real encode/decode client — replaces the encode/decode mocks with the
  * dedicated FastAPI endpoints:
  *
- *   POST /api/stego/image/encode   (PNG/BMP -> LSB, JPEG -> DCT-QIM)
- *   POST /api/stego/image/decode
+ *   POST /api/stego/image/encode   (raster covers -> spatial LSB PNG; UI prefers in-browser)
+ *   POST /api/stego/image/decode   (PNG/BMP client LSB; JPEG files still hit the server for legacy DCT)
  *   POST /api/stego/video/encode   (I-frame DCT-QIM + H.264 CRF re-encode)
  *   POST /api/stego/video/decode
  *
@@ -38,9 +38,10 @@ import {
   type PayloadType,
   type UnifiedPresetId,
 } from "@/lib/encode-decode-mock";
-import { buildContainer, embedImage, extractImage } from "@/lib/stego/index";
+import { buildContainer, embedImage, extractImage, decodeImageToRgb } from "@/lib/stego/index";
 import { CompressionPresetId, PayloadType as ContainerPayloadType } from "@/lib/stego/index";
 import { spatialContainerBudget } from "@/lib/stego/capacity";
+import { isSpatialImageFormat, isSpatialStegoFormat } from "@/lib/stego/spatial-formats";
 
 /** UI payload id -> server enum. */
 const UI_TO_API: Record<PayloadType, ApiPayloadType> = {
@@ -58,10 +59,14 @@ const API_TO_UI: Record<ApiPayloadType, PayloadType> = {
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
-/** PNG/BMP image covers ride the client-side spatial-LSB pipeline (Phase 3). */
-function isSpatialCover(drop: DropFile): boolean {
-  const format = (drop.format ?? "").toLowerCase();
-  return drop.kind === "image" && (format === "png" || format === "bmp");
+/** Raster covers (PNG/BMP/JPEG/WebP/GIF) encode in-browser as spatial LSB → PNG. */
+function isSpatialEncodeCover(drop: DropFile): boolean {
+  return drop.kind === "image" && isSpatialImageFormat(drop.format);
+}
+
+/** PNG/BMP stego files extract in-browser. JPEG files stay on the server (legacy DCT-QIM). */
+function isSpatialDecodeCover(drop: DropFile): boolean {
+  return drop.kind === "image" && isSpatialStegoFormat(drop.format);
 }
 
 /** Error the pages can surface via Toast/Alert (carries server 400 detail). */
@@ -145,9 +150,9 @@ export async function runEmbed(
     formData.append(payloadType === "image" ? "payload_image" : "payload_file", payloadData.file);
   }
 
-  // PNG/BMP covers are embedded entirely in the browser (spatial LSB, same
-  // wire format the backend uses) — no upload/encode round trip.
-  if (isSpatialCover(cover)) {
+  // Raster image covers are embedded entirely in the browser (spatial LSB,
+  // PNG out) — no upload/encode round trip. JPEG is decoded to pixels first.
+  if (isSpatialEncodeCover(cover)) {
     return runClientEmbed(input, onProgress, signal);
   }
 
@@ -182,10 +187,10 @@ export async function runEmbed(
 }
 
 /**
- * Client-side PNG/BMP embed (Phase 3): builds the HSTG v2 container in the
- * browser (LOSSLESS config: LSB depth 1, RS-ECC, AES-GCM when a password is
- * set, DEFLATE-if-smaller), verifies the exact spatial fit, then runs the
- * decode -> LSB -> encode-PNG pipeline off the main thread. No network.
+ * Client-side raster embed: builds the HSTG v2 container in the browser
+ * (LOSSLESS: LSB depth 1, RS-ECC, AES-GCM when a password is set,
+ * DEFLATE-if-smaller), verifies the spatial fit, then decode -> LSB -> PNG.
+ * JPEG/WebP/GIF covers are rasterized first; output is always PNG.
  */
 async function runClientEmbed(
   input: EncodeInput,
@@ -193,7 +198,16 @@ async function runClientEmbed(
   signal?: AbortSignal,
 ): Promise<EncodeResult> {
   const { cover, payloadType, payloadData, password, preset } = input;
-  if (!cover.width || !cover.height) {
+  let width = cover.width;
+  let height = cover.height;
+  if (!width || !height) {
+    const decoded = await decodeImageToRgb(cover.file);
+    width = decoded.width;
+    height = decoded.height;
+    cover.width = width;
+    cover.height = height;
+  }
+  if (!width || !height) {
     throw new StegoApiError(
       "Could not read this cover's dimensions for a browser-side embed.",
       undefined,
@@ -224,7 +238,7 @@ async function runClientEmbed(
   });
 
   // Exact fit check mirrors _encode_lsb's spatial_container_budget (bpc=1).
-  const budget = spatialContainerBudget(cover.height, cover.width);
+  const budget = spatialContainerBudget(height, width);
   if (container.length > budget) {
     throw new StegoApiError(
       `Payload does not fit this cover: container is ${container.length} B, the lossless spatial budget is ${budget} B. Use a larger cover or a smaller/compressed payload.`,
@@ -343,8 +357,9 @@ export async function runExtract(
   onProgress({ stage: "uploading", percent: 10, detail: "UPLOADING CARRIER" });
   await sleep(250);
 
-  // PNG/BMP stego files are extracted entirely in the browser (spatial LSB).
-  if (isSpatialCover(stego)) {
+  // PNG/BMP stego files extract in the browser. JPEG files go to the server
+  // so leftover DCT-QIM carriers still decode.
+  if (isSpatialDecodeCover(stego)) {
     return runClientExtract(stego, password, onProgress);
   }
 
@@ -387,6 +402,7 @@ export async function runExtract(
       res.original_filename || `${base}-recovered${extensionFor(res.mime_type ?? "", fallbackExt)}`,
     fileSize: fileBlob?.size ?? 0,
     fileBlob,
+    mimeType: res.mime_type ?? fileBlob?.type,
     algorithm: isVideo
       ? "video_dct_qim"
       : /\.png$|\.bmp$/i.test(stego.file.name)
@@ -445,6 +461,7 @@ async function runClientExtract(
       fileName: res.header.originalFilename || `${base}-recovered${extensionFor(mime, fallbackExt)}`,
       fileSize: res.payload.length,
       fileBlob,
+      mimeType: mime || undefined,
       algorithm: "image_lsb",
       encrypted,
       magic,

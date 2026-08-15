@@ -61,11 +61,11 @@ class PayloadCompression(str, Enum):
     DEFLATE = "DEFLATE"
 
 
-# Restricted cover/payload matrix enforced at the API layer (task step 5).
-#   IMAGE cover -> {TEXT_MESSAGE, TEXT_FILE}
+# Restricted cover/payload matrix enforced at the API layer.
+#   IMAGE cover -> {TEXT_MESSAGE, TEXT_FILE, IMAGE}
 #   VIDEO cover -> {TEXT_MESSAGE, TEXT_FILE, IMAGE}
 ALLOWED_PAYLOADS = {
-    CoverType.IMAGE: [PayloadType.TEXT_MESSAGE, PayloadType.TEXT_FILE],
+    CoverType.IMAGE: [PayloadType.TEXT_MESSAGE, PayloadType.TEXT_FILE, PayloadType.IMAGE],
     CoverType.VIDEO: [PayloadType.TEXT_MESSAGE, PayloadType.TEXT_FILE, PayloadType.IMAGE],
 }
 
@@ -79,8 +79,9 @@ class PresetCapacity(BaseModel):
     """Capacity for one compression preset.
 
     Image presets populate ``target_quality_factor`` +
-    ``max_bytes_text_message`` / ``max_bytes_text_file``. Video presets populate
-    ``target_crf`` + the per-minute rates and ``max_bytes_image``.
+    ``max_bytes_text_message`` / ``max_bytes_text_file`` / ``max_bytes_image``.
+    Video presets populate ``target_crf`` + the per-minute rates and
+    ``max_bytes_image``.
 
     ``compression_preset`` / ``text_compression_factor`` echo the channel-level
     compression preset the capacity was computed under (e.g. NO_COMPRESSION =>
@@ -110,11 +111,11 @@ class PresetCapacity(BaseModel):
     max_bytes_text_message: Optional[int] = None
     max_bytes_text_file: Optional[int] = None
 
-    # Video-only
+    # Image payload (image covers + video covers) / video-only rates
+    max_bytes_image: Optional[int] = None
     target_crf: Optional[int] = None
     max_bytes_per_minute_text_message: Optional[int] = None
     max_bytes_per_minute_text_file: Optional[int] = None
-    max_bytes_image: Optional[int] = None
 
     # Diagnostics (optional; useful for the evaluation harness)
     total_blocks: Optional[int] = None
@@ -153,6 +154,82 @@ class DecodeResponse(BaseModel):
     message: Optional[str] = None
     payload_base64: Optional[str] = None
     compressed: Optional[bool] = None
+
+
+class AnalyzeDetectorResult(BaseModel):
+    """One classical steganalysis detector's output."""
+    detected: bool
+    stego_probability: Optional[float] = None
+    chi2_stat: Optional[float] = None
+    estimated_payload: Optional[float] = None
+    prefix_detected: Optional[bool] = None
+
+
+class SequentialWsCandidate(BaseModel):
+    """One hypothesized prefix/window on the sequential-WS curve."""
+    end: int
+    raw_score: float
+    adjusted_p_value: Optional[float] = None
+
+
+class SequentialWsChannelScores(BaseModel):
+    red: float
+    green: float
+    blue: float
+
+
+class SequentialWsResult(BaseModel):
+    """Sequential Weighted Stego (Ker) scan of an RGB raster prefix.
+
+    ``decision`` is ``clean``, ``suspicious``, or ``inconclusive``.
+    ``suspicious`` means statistically suspicious for sequential LSB
+    replacement — not proof that hidden data exists. ``score`` is the
+    maximum standardized WS statistic (z), not a probability.
+    """
+    detector: str = "sequential_ws"
+    decision: str
+    score: float
+    p_value: Optional[float] = None
+    estimated_change_rate: float
+    estimated_payload_bits: Optional[int] = None
+    estimated_prefix_samples: Optional[int] = None
+    channel_scores: SequentialWsChannelScores
+    candidate_curve: List[SequentialWsCandidate]
+    runtime_ms: float
+    limitations: List[str]
+    implementation_version: str
+    detected: bool
+
+
+class HstgHeaderScan(BaseModel):
+    """Sequential-LSB probe for this app's unencrypted v1 HSTG wrapper.
+
+    ``found`` means the raster LSBs begin with a plausible HSTG v1 header
+    (magic, version, encrypted flag, length that fits the cover). That is
+    this encoder's framing, not a generic LSB proof. ``payload_bytes`` is
+    the v1 LENGTH field (AES-GCM wrapper size).
+    """
+    found: bool
+    bits_per_channel: Optional[int] = None
+    payload_bytes: Optional[int] = None
+    version: Optional[int] = None
+
+
+class AnalyzeResponse(BaseModel):
+    """Chi-square + SPA + RS + primary sets + sequential WS + HSTG header scan.
+
+    ``verdict`` is ``lsb_suspected`` if the sequential LSBs carry this app's
+    HSTG v1 wrapper, sequential WS flags a diluted prefix, or SPA and RS both
+    estimate a rate ≥ 0.15 on a non-JPEG. Chi-square and primary sets are
+    reported but do not vote. A flag is not proof of a specific hidden file.
+    """
+    verdict: str
+    chi_square: AnalyzeDetectorResult
+    sample_pairs: AnalyzeDetectorResult
+    rs_analysis: AnalyzeDetectorResult
+    primary_sets: AnalyzeDetectorResult
+    sequential_ws: SequentialWsResult
+    hstg_header: HstgHeaderScan
 
 
 class ErrorResponse(BaseModel):

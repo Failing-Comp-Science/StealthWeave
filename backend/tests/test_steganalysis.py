@@ -13,7 +13,13 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 import numpy as np
 import pytest
 
-from modules.steganalysis import ChiSquareAttack, RSAnalysis, self_test_image
+from modules.steganalysis import (
+    ChiSquareAttack,
+    PrimarySets,
+    RSAnalysis,
+    SamplePairAnalysis,
+    self_test_image,
+)
 from modules.image_stego import LSBEmbedder, SUNIWARDEmbedder
 
 
@@ -38,19 +44,19 @@ def test_chi_square_returns_valid_result():
     """Chi-square returns well-formed dict."""
     img = _natural_image()
     result = ChiSquareAttack.detect(img)
-    assert 'chi2_stat' in result
-    assert 'p_value' in result
-    assert 'detected' in result
-    assert 0.0 <= result['p_value'] <= 1.0
-    assert 0.0 <= result['confidence'] <= 1.0
+    assert "chi2_stat" in result
+    assert "p_value" in result
+    assert "detected" in result
+    assert "prefix_detected" in result
+    assert 0.0 <= result["p_value"] <= 1.0
+    assert 0.0 <= result["confidence"] <= 1.0
 
 
 def test_chi_square_detects_heavy_lsb():
-    """Chi-square should flag heavy sequential LSB more than clean."""
+    """Heavy sequential LSB should change the progressive chi-square curve."""
     img = _natural_image()
 
-    # Fill nearly the whole image with sequential LSB (high embedding rate)
-    payload = os.urandom(256 * 256 * 3 // 8 - 100)  # ~near full capacity
+    payload = os.urandom(256 * 256 * 3 // 8 - 100)
     emb = LSBEmbedder(random_order=False, bits_per_channel=1)
     result = emb.embed(img, payload, "key")
     stego = result.stego_media
@@ -58,11 +64,50 @@ def test_chi_square_detects_heavy_lsb():
     chi_clean = ChiSquareAttack.detect(img)
     chi_stego = ChiSquareAttack.detect(stego)
 
-    # Heavy embedding should not REDUCE detectability
-    # (exact threshold depends on image; we check it runs and produces a signal)
-    assert chi_stego['confidence'] >= 0.0
-    # The stego confidence should be >= clean (heavy sequential embedding)
-    assert chi_stego['chi2_stat'] != chi_clean['chi2_stat']
+    assert chi_stego["confidence"] >= 0.0
+    assert chi_stego["chi2_stat"] != chi_clean["chi2_stat"]
+    assert chi_stego["stego_probability"] >= chi_clean["stego_probability"]
+
+
+def test_chi_square_detects_modest_sequential_prefix():
+    """A modest raster-prefix embed should raise prefix p relative to cover."""
+    img = _natural_image(seed=3)
+    payload = os.urandom(2500)
+    stego = LSBEmbedder(random_order=False, bits_per_channel=1).embed(
+        img, payload, "key"
+    ).stego_media
+    chi = ChiSquareAttack.detect(stego)
+    assert chi["stego_probability"] > ChiSquareAttack.detect(img)["stego_probability"]
+
+
+# ---------------------------------------------------------------------------
+# Sample Pair Analysis
+# ---------------------------------------------------------------------------
+
+def test_spa_returns_valid_result():
+    img = _natural_image()
+    result = SamplePairAnalysis.detect(img)
+    assert "estimated_payload" in result
+    assert 0.0 <= result["estimated_payload"] <= 1.0
+    assert "detected" in result
+
+
+def test_spa_clean_low_rate():
+    img = _natural_image(seed=0)
+    result = SamplePairAnalysis.detect(img)
+    assert result["estimated_payload"] < 0.05
+    assert result["detected"] is False
+
+
+def test_spa_detects_sequential_lsb():
+    img = _natural_image(seed=0)
+    payload = os.urandom(8000)
+    stego = LSBEmbedder(random_order=False, bits_per_channel=1).embed(
+        img, payload, "key"
+    ).stego_media
+    spa = SamplePairAnalysis.detect(stego)
+    assert spa["estimated_payload"] >= 0.05
+    assert spa["detected"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -83,8 +128,42 @@ def test_rs_analysis_clean_low_payload():
     """RS-analysis on a clean image should estimate low payload."""
     img = _natural_image(seed=42)
     result = RSAnalysis.detect(img)
-    # Clean image should estimate relatively low embedding
-    assert result['estimated_payload'] < 0.5
+    assert result["estimated_payload"] < 0.05
+    assert result["detected"] is False
+
+
+def test_rs_analysis_detects_heavy_lsb():
+    img = _natural_image(seed=1)
+    payload = os.urandom(12000)
+    stego = LSBEmbedder(random_order=False, bits_per_channel=1).embed(
+        img, payload, "key"
+    ).stego_media
+    rs = RSAnalysis.detect(stego)
+    assert rs["estimated_payload"] > RSAnalysis.detect(img)["estimated_payload"]
+    assert rs["estimated_payload"] >= 0.10
+    assert rs["detected"] is True
+
+
+# ---------------------------------------------------------------------------
+# Primary sets
+# ---------------------------------------------------------------------------
+
+def test_primary_sets_clean_low_rate():
+    img = _natural_image(seed=0)
+    result = PrimarySets.detect(img)
+    assert 0.0 <= result["estimated_payload"] <= 1.0
+    assert result["estimated_payload"] < 0.05
+    assert result["detected"] is False
+
+
+def test_primary_sets_detects_sequential_lsb():
+    img = _natural_image(seed=0)
+    payload = os.urandom(8000)
+    stego = LSBEmbedder(random_order=False, bits_per_channel=1).embed(
+        img, payload, "key"
+    ).stego_media
+    ps = PrimarySets.detect(stego)
+    assert ps["estimated_payload"] > PrimarySets.detect(img)["estimated_payload"]
 
 
 # ---------------------------------------------------------------------------
