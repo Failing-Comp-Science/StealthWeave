@@ -1,4 +1,4 @@
-# Harpocrates
+# Image Stego And Basic Stego analysis
 
 Steganography research platform: hide, extract, and analyze hidden data in images,
 audio, and links. Python backend (classical stego library + metrics) and a
@@ -12,33 +12,19 @@ Harpocrates/
 ├── backend/              Python stego library (LSB, adaptive, audio, link, steganalysis, metrics) + FastAPI scaffold
 │   └── modules/          the working stego engines (image/audio/link/steganalysis)
 │   └── tests/            pytest suite
-├── frontend/              Replit pnpm workspace (React 19 + Vite + shadcn/ui)
+├── frontend/             Replit pnpm workspace (React 19 + Vite + shadcn/ui)
 │   ├── artifacts/harpocrates/   main client-side app (primary UI)
 │   ├── artifacts/api-server/    Express 5 (currently GET /api/healthz only)
 │   ├── artifacts/mockup-sandbox/ shadcn component sandbox
 │   └── lib/              Orval-generated api clients + api-spec (OpenAPI) + Drizzle db client
-├── HOW_IT_WORKS.md        design documentation (PDF generated to docs/)
-├── CAPACITY_MODEL.md      measured capacity per cover/preset (root by rule)
-├── CARRIER_PRESETS.md     legacy carrier-preset axis (kept for history)
-├── COMPRESSION_PRESETS.md compression-preset axis (kept for history)
-├── UNIFIED_PRESETS.md     current unified user-facing preset contract
-├── STEGANALYSIS.md        sequential WS + classical LSB detectors (math, limits)
-├── REFERENCE_REVIEW.md    studied third-party references + license map
-├── WORK_AND_FAILURES.md   work report + failure log (single ledger)
-├── AGENT_RULES.md         living rules for the AI coding agent
-├── message/               sample payloads (HTML + image)
-├── codebase_and_repo_audit.md  single source of truth for reuse/build-fresh decisions
-└── evaluation/            synthetic corpus + benchmarks + results
+├── message/              sample payload assets
+└── evaluation/           synthetic corpus + benchmarks + results
 ```
-
-> All Markdown documentation lives at the repo root (audit rule); `docs/` holds
-> generated artifacts only (`HOW_IT_WORKS.pdf` + `generate_pdf.py`).
 
 ## Remote
 
-The git remote currently points at a GitHub repository whose name still reflects the
-earlier (reverted) project name. **This is pending a rename on GitHub.** The origin
-URL is configured in `.git/config`; see `AGENT_RULES.md` §9 for the pending action.
+The git remote points at a GitHub repository whose name reflects an earlier project
+name. The origin URL is configured in `.git/config`.
 
 ## Development
 
@@ -50,7 +36,6 @@ sample pair analysis, RS-analysis, primary sets, **sequential Weighted Stego**
 (Ker), and a scan for this app’s unencrypted **HSTG v1 header** in the
 sequential LSBs. Combined verdict is that header, WS, or two quantitative
 detectors. Short typed messages often miss WS but still carry the header.
-Mathematics, assumptions, and limits: [STEGANALYSIS.md](STEGANALYSIS.md).
 Offline paired evaluation (not default pytest):
 
 ```
